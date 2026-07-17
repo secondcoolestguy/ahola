@@ -133,7 +133,7 @@ fn evaluate_math_func(func_name: &str, args_str: &str) -> String {
     }
 }
 
-fn lex(code: &str) -> Result<Vec<Token>, String> {
+pub fn lex(code: &str) -> Result<Vec<Token>, String> {
     let mut tokens = Vec::new();
     let lines = code.lines();
 
@@ -300,8 +300,7 @@ fn compile_and_run_rust_fallback(code: &str) {
     }
 }
 
-// Compiler: Turns code tokens into linear Bytecode instructions
-fn compile_tokens(
+pub fn compile_tokens(
     tokens: &[Token],
     symbol_table: &mut SymbolTable,
     bytecode: &mut Vec<OpCode>,
@@ -310,9 +309,8 @@ fn compile_tokens(
     while idx < tokens.len() {
         match tokens[idx].token_type {
             TokenType::Let | TokenType::Disguise | TokenType::Identifier => {
-                let start_idx = idx;
-                let mut is_changeable = false;
                 let mut current_idx = idx;
+                let mut is_changeable = false;
 
                 if tokens[current_idx].token_type == TokenType::Let || tokens[current_idx].token_type == TokenType::Disguise {
                     current_idx += 1;
@@ -320,8 +318,32 @@ fn compile_tokens(
 
                 if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::Identifier {
                     let var_name = tokens[current_idx].value.clone();
-                    current_idx += 1;
+                    
+                    if current_idx + 1 < tokens.len() && tokens[current_idx + 1].token_type == TokenType::PlusEquals {
+                        let mod_idx = current_idx + 2;
+                        if mod_idx < tokens.len() {
+                            let mod_val = tokens[mod_idx].value.clone();
+                            if let Some(sym) = symbol_table.symbols.get(&var_name) {
+                                if !sym.changeable {
+                                    println!("\x1b[1;31mCompile Error:\x1b[0m Cannot modify immutable variable '{}'.", var_name);
+                                    std::process::exit(1);
+                                }
 
+                                let mod_data = if tokens[mod_idx].token_type == TokenType::NumberLiteral {
+                                    if mod_val.contains('.') { AholaData::Float(mod_val.parse().unwrap_or(0.0)) }
+                                    else { AholaData::Integer(mod_val.parse().unwrap_or(0)) }
+                                } else {
+                                    AholaData::String(mod_val)
+                                };
+
+                                bytecode.push(OpCode::PlusEqual(sym.slot, mod_data));
+                                idx = mod_idx + 1;
+                                continue;
+                            }
+                        }
+                    }
+
+                    current_idx += 1;
                     if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::ChangeableModifier {
                         is_changeable = true;
                         current_idx += 1;
@@ -373,7 +395,6 @@ fn compile_tokens(
                                 explicit_type
                             };
 
-                            // Look up slot or allocate slot
                             let slot = if let Some(sym) = symbol_table.symbols.get(&var_name) {
                                 sym.slot
                             } else {
@@ -382,32 +403,6 @@ fn compile_tokens(
 
                             bytecode.push(OpCode::Store(slot, data));
                             idx = if tokens[value_idx].token_type == TokenType::LeftBracket { current_idx + 1 } else { value_idx + 1 };
-                            continue;
-                        }
-                    }
-                }
-
-                // Handle mutating logic (+=)
-                let var_name = tokens[start_idx].value.clone();
-                if idx + 1 < tokens.len() && tokens[idx + 1].token_type == TokenType::PlusEquals {
-                    let mod_idx = idx + 2;
-                    if mod_idx < tokens.len() {
-                        let mod_val = tokens[mod_idx].value.clone();
-                        if let Some(sym) = symbol_table.symbols.get(&var_name) {
-                            if !sym.changeable {
-                                println!("\x1b[1;31mCompile Error:\x1b[0m Cannot modify immutable variable '{}'.", var_name);
-                                std::process::exit(1);
-                            }
-
-                            let mod_data = if tokens[mod_idx].token_type == TokenType::NumberLiteral {
-                                if mod_val.contains('.') { AholaData::Float(mod_val.parse().unwrap_or(0.0)) }
-                                else { AholaData::Integer(mod_val.parse().unwrap_or(0)) }
-                            } else {
-                                AholaData::String(mod_val)
-                            };
-
-                            bytecode.push(OpCode::PlusEqual(sym.slot, mod_data));
-                            idx = mod_idx + 1;
                             continue;
                         }
                     }
@@ -463,7 +458,6 @@ fn compile_tokens(
     }
 }
 
-// High-Speed Virtual Machine Execution Engine
 pub struct VirtualMachine {
     pub memory: Vec<Option<AholaData>>,
 }
@@ -477,22 +471,25 @@ impl VirtualMachine {
         for instruction in bytecode {
             match instruction {
                 OpCode::Store(slot, data) => {
-                    self.memory[*slot] = Some(data.clone());
+                    if *slot < self.memory.len() {
+                        self.memory[*slot] = Some(data.clone());
+                    }
                 }
                 OpCode::PlusEqual(slot, modifier) => {
-                    if let Some(Some(existing)) = self.memory.get_mut(*slot) {
-                        match (existing, modifier) {
-                            (AholaData::Integer(old), AholaData::Integer(m)) => *old += m,
-                            (AholaData::Float(old), AholaData::Float(m)) => *old += m,
-                            (AholaData::String(old), AholaData::String(m)) => old.push_str(m),
-                            (AholaData::Card(old), m) => old.push(m.clone()),
-                            _ => panic!("VM Runtime Exception: Type mutation mismatch register slot!"),
+                    if *slot < self.memory.len() {
+                        if let Some(Some(existing)) = self.memory.get_mut(*slot) {
+                            match (existing, modifier) {
+                                (AholaData::Integer(old), AholaData::Integer(m)) => *old += m,
+                                (AholaData::Float(old), AholaData::Float(m)) => *old += m,
+                                (AholaData::String(old), AholaData::String(m)) => old.push_str(m),
+                                (AholaData::Card(old), m) => old.push(m.clone()),
+                                _ => panic!("VM Runtime Exception: Type mutation mismatch register slot!"),
+                            }
                         }
                     }
                 }
                 OpCode::Stamp(message) => {
                     let mut output_str = message.clone();
-                    // Resolve dependencies inside the VM memory map cleanly!
                     for (name, symbol) in &symbol_table.symbols {
                         let pattern = format!("\\({})", name);
                         if output_str.contains(&pattern) {
@@ -510,8 +507,10 @@ impl VirtualMachine {
                     println!("{}", output_str);
                 }
                 OpCode::Dump(slot) => {
-                    if let Some(Some(data)) = self.memory.get(*slot) {
-                        println!("{:?}", data);
+                    if *slot < self.memory.len() {
+                        if let Some(Some(data)) = self.memory.get(*slot) {
+                            println!("{:?}", data);
+                        }
                     }
                 }
             }
@@ -556,13 +555,11 @@ fn main() {
     let mut symbol_table = SymbolTable::new();
     let mut bytecode = Vec::new();
 
-    // 1. Run Compilation phase
     compile_tokens(&tokens, &mut symbol_table, &mut bytecode);
 
     let duration = start_time.elapsed().as_millis();
     println!("{}Compiled{} {} in {}ms", bold_hex_dark_green, reset_color, file_path, duration);
     
-    // 2. Instantiate VM with the precise amount of memory slots allocated during compile
     let mut vm = VirtualMachine::new(symbol_table.next_slot);
     vm.run(&bytecode, &symbol_table);
 }
