@@ -17,7 +17,7 @@
       "patterns": [
         {
           "name": "keyword.control.ahola",
-          "match": "\\b(let|disguise|pub|struct|if|else|loop|stamp|dump)\\b"
+          "match": "\\b(disguise|pub|struct|if|else|loop|stamp|dump)\\b"
         },
         {
           "name": "storage.modifier.ahola",
