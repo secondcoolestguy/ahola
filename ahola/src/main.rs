@@ -331,13 +331,11 @@ fn interpret_tokens(tokens: &[Token], variables: &mut HashMap<String, AholaValue
                 let mut current_idx = idx + 1;
                 let mut is_changeable = false;
 
-                // Check if changeable modifier (*c) immediately follows the identifier
                 if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::ChangeableModifier {
                     is_changeable = true;
                     current_idx += 1;
                 }
 
-                // Check for standard assignment (=) for clean non-prefixed layout
                 if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::Equals {
                     let value_idx = current_idx + 1;
                     if value_idx < tokens.len() {
@@ -352,7 +350,6 @@ fn interpret_tokens(tokens: &[Token], variables: &mut HashMap<String, AholaValue
                     }
                 }
 
-                // Handle mutating operations (+=)
                 if idx + 1 < tokens.len() && tokens[idx + 1].token_type == TokenType::PlusEquals {
                     let modifier_idx = idx + 2;
                     if modifier_idx < tokens.len() {
