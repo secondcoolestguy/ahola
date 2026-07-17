@@ -1,0 +1,53 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Ahola",
+  "patterns": [
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#comments"
+    }
+  ],
+  "repository": {
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.ahola",
+          "match": "\\b(let|disguise|pub|struct|if|else|loop|stamp|dump)\\b"
+        },
+        {
+          "name": "storage.modifier.ahola",
+          "match": "\\*c"
+        },
+        {
+          "name": "entity.name.function.ahola",
+          "match": "@[a-zA-Z_][a-zA-Z0-9_]*"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.ahola",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.ahola",
+          "match": "\\\\\\([a-zA-Z_][a-zA-Z0-9_]*\\)"
+        }
+      ]
+    },
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.ahola",
+          "match": "//.*$"
+        }
+      ]
+    }
+  },
+  "scopeName": "source.ahola"
+}
