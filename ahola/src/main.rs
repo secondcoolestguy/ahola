@@ -25,7 +25,6 @@ pub enum TokenType {
     If,
     Else,
     Loop,
-    // New tokens for your updated layout:
     Pub,
     Struct,
     ChangeableModifier, // For *c
@@ -41,7 +40,7 @@ pub struct Token {
 pub struct AholaValue {
     pub data: Vec<String>,
     pub var_type: String,
-    pub changeable: bool, // Track if it was declared with *c
+    pub changeable: bool,
 }
 
 fn detects_pure_rust(code: &str) -> bool {
@@ -329,12 +328,37 @@ fn interpret_tokens(tokens: &[Token], variables: &mut HashMap<String, AholaValue
             }
             TokenType::Identifier => {
                 let var_name = tokens[idx].value.clone();
+                let mut current_idx = idx + 1;
+                let mut is_changeable = false;
+
+                // Check if changeable modifier (*c) immediately follows the identifier
+                if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::ChangeableModifier {
+                    is_changeable = true;
+                    current_idx += 1;
+                }
+
+                // Check for standard assignment (=) for clean non-prefixed layout
+                if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::Equals {
+                    let value_idx = current_idx + 1;
+                    if value_idx < tokens.len() {
+                        let var_val = tokens[value_idx].value.clone();
+                        variables.insert(var_name.clone(), AholaValue {
+                            data: vec![var_val],
+                            var_type: if tokens[value_idx].token_type == TokenType::NumberLiteral { "int/float".to_string() } else { "string".to_string() },
+                            changeable: is_changeable,
+                        });
+                        idx = value_idx + 1;
+                        continue;
+                    }
+                }
+
+                // Handle mutating operations (+=)
                 if idx + 1 < tokens.len() && tokens[idx + 1].token_type == TokenType::PlusEquals {
                     let modifier_idx = idx + 2;
                     if modifier_idx < tokens.len() {
                         let modifier = tokens[modifier_idx].value.clone();
                         if let Some(existing) = variables.get_mut(&var_name) {
-                            if !existing.changeable && tokens[idx - 1].token_type != TokenType::Let {
+                            if !existing.changeable {
                                 println!("\x1b[1;31mRuntime Error:\x1b[0m Cannot modify immutable variable '{}'. Did you forget *c?", var_name);
                                 std::process::exit(1);
                             }
@@ -355,7 +379,6 @@ fn interpret_tokens(tokens: &[Token], variables: &mut HashMap<String, AholaValue
                 idx += 1;
             }
             TokenType::Pub => {
-                // Look ahead for struct @main { ... }
                 if idx + 3 < tokens.len() 
                     && tokens[idx + 1].token_type == TokenType::Struct 
                     && tokens[idx + 2].value == "@main" 
@@ -373,7 +396,6 @@ fn interpret_tokens(tokens: &[Token], variables: &mut HashMap<String, AholaValue
                         }
                         scan += 1;
                     }
-                    // Run the code block safely inside the entry scope!
                     interpret_tokens(&inner_tokens, variables, outputs);
                     idx = scan;
                 } else {
@@ -422,7 +444,13 @@ fn main() {
     let bold_hex_dark_green = "\x1b[1;38;2;30;104;35m";
     let reset_color = "\x1b[0m";
 
-    let ahola_code = fs::read_to_string(file_path).expect("Failed to read script.");
+    let ahola_code = match fs::read_to_string(file_path) {
+        Ok(code) => code,
+        Err(_) => {
+            println!("\x1b[1;31mError:\x1b[0m No such file or directory: '{}'", file_path);
+            std::process::exit(1);
+        }
+    };
 
     if detects_pure_rust(&ahola_code) {
         compile_and_run_rust_fallback(&ahola_code);
