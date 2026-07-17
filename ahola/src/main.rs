@@ -7,7 +7,7 @@ use std::time::Instant;
 #[derive(Debug, PartialEq, Clone)]
 pub enum TokenType {
     Let,
-    Type, // Added Type token
+    Type,
     Stamp,
     Dump,
     Disguise,
@@ -49,7 +49,7 @@ pub enum AholaData {
 pub enum OpCode {
     Store(usize, AholaData),
     PlusEqual(usize, AholaData),
-    Stamp(String), 
+    Stamp(String),
     Dump(usize),
 }
 
@@ -57,6 +57,7 @@ pub struct Symbol {
     pub slot: usize,
     pub var_type: String,
     pub changeable: bool,
+    pub is_private: bool,
 }
 
 pub struct SymbolTable {
@@ -71,9 +72,23 @@ impl SymbolTable {
             next_slot: 0,
         }
     }
-    pub fn register(&mut self, name: &str, var_type: String, changeable: bool) -> usize {
+    pub fn register(
+        &mut self,
+        name: &str,
+        var_type: String,
+        changeable: bool,
+        is_private: bool,
+    ) -> usize {
         let slot = self.next_slot;
-        self.symbols.insert(name.to_string(), Symbol { slot, var_type, changeable });
+        self.symbols.insert(
+            name.to_string(),
+            Symbol {
+                slot,
+                var_type,
+                changeable,
+                is_private,
+            },
+        );
         self.next_slot += 1;
         slot
     }
@@ -94,37 +109,53 @@ fn evaluate_math_func(func_name: &str, args_str: &str) -> String {
 
     match func_name {
         "min" => {
-            if parts.is_empty() { return "0".to_string(); }
+            if parts.is_empty() {
+                return "0".to_string();
+            }
             let mut current_min = parts[0];
             for &val in &parts {
-                if val < current_min { current_min = val; }
+                if val < current_min {
+                    current_min = val;
+                }
             }
             current_min.to_string()
         }
         "mid" => {
-            if parts.len() != 3 { return "0".to_string(); }
+            if parts.len() != 3 {
+                return "0".to_string();
+            }
             let mut sorted = parts.clone();
             sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
             sorted[1].to_string()
         }
         "max" => {
-            if parts.is_empty() { return "0".to_string(); }
+            if parts.is_empty() {
+                return "0".to_string();
+            }
             let mut current_max = parts[0];
             for &val in &parts {
-                if val > current_max { current_max = val; }
+                if val > current_max {
+                    current_max = val;
+                }
             }
             current_max.to_string()
         }
         "round_up" => {
-            if parts.is_empty() { return "0".to_string(); }
+            if parts.is_empty() {
+                return "0".to_string();
+            }
             parts[0].ceil().to_string()
         }
         "round_down" => {
-            if parts.is_empty() { return "0".to_string(); }
+            if parts.is_empty() {
+                return "0".to_string();
+            }
             parts[0].floor().to_string()
         }
         "abs" => {
-            if parts.is_empty() { return "0".to_string(); }
+            if parts.is_empty() {
+                return "0".to_string();
+            }
             parts[0].abs().to_string()
         }
         _ => "0".to_string(),
@@ -172,28 +203,52 @@ pub fn lex(code: &str) -> Result<Vec<Token>, String> {
                     return Err("Expected 'c' after '*' for changeable modifier".to_string());
                 }
             } else if ch == ':' {
-                tokens.push(Token { token_type: TokenType::Colon, value: ch.to_string() });
+                tokens.push(Token {
+                    token_type: TokenType::Colon,
+                    value: ch.to_string(),
+                });
                 chars.next();
             } else if ch == '[' {
-                tokens.push(Token { token_type: TokenType::LeftBracket, value: ch.to_string() });
+                tokens.push(Token {
+                    token_type: TokenType::LeftBracket,
+                    value: ch.to_string(),
+                });
                 chars.next();
             } else if ch == ']' {
-                tokens.push(Token { token_type: TokenType::RightBracket, value: ch.to_string() });
+                tokens.push(Token {
+                    token_type: TokenType::RightBracket,
+                    value: ch.to_string(),
+                });
                 chars.next();
             } else if ch == '{' {
-                tokens.push(Token { token_type: TokenType::LeftBrace, value: ch.to_string() });
+                tokens.push(Token {
+                    token_type: TokenType::LeftBrace,
+                    value: ch.to_string(),
+                });
                 chars.next();
             } else if ch == '}' {
-                tokens.push(Token { token_type: TokenType::RightBrace, value: ch.to_string() });
+                tokens.push(Token {
+                    token_type: TokenType::RightBrace,
+                    value: ch.to_string(),
+                });
                 chars.next();
             } else if ch == '>' {
-                tokens.push(Token { token_type: TokenType::GreaterThan, value: ch.to_string() });
+                tokens.push(Token {
+                    token_type: TokenType::GreaterThan,
+                    value: ch.to_string(),
+                });
                 chars.next();
             } else if ch == ',' {
-                tokens.push(Token { token_type: TokenType::Comma, value: ch.to_string() });
+                tokens.push(Token {
+                    token_type: TokenType::Comma,
+                    value: ch.to_string(),
+                });
                 chars.next();
             } else if ch == '=' {
-                tokens.push(Token { token_type: TokenType::Equals, value: ch.to_string() });
+                tokens.push(Token {
+                    token_type: TokenType::Equals,
+                    value: ch.to_string(),
+                });
                 chars.next();
             } else if ch == '+' {
                 chars.next();
@@ -218,6 +273,10 @@ pub fn lex(code: &str) -> Result<Vec<Token>, String> {
                     word.push(chars.next().unwrap());
                 }
 
+                if chars.peek() == Some(&'c') && word.is_empty() {
+                    // Fallback pattern match catch-all safely
+                }
+
                 if chars.peek() == Some(&'(') {
                     chars.next();
                     let mut args_inner = String::new();
@@ -237,18 +296,50 @@ pub fn lex(code: &str) -> Result<Vec<Token>, String> {
                 }
 
                 match word.as_str() {
-                    "let" => tokens.push(Token { token_type: TokenType::Let, value: word }),
-                    "type" => tokens.push(Token { token_type: TokenType::Type, value: word }),
-                    "pub" => tokens.push(Token { token_type: TokenType::Pub, value: word }),
-                    "struct" => tokens.push(Token { token_type: TokenType::Struct, value: word }),
-                    "stamp" => tokens.push(Token { token_type: TokenType::Stamp, value: word }),
-                    "dump" => tokens.push(Token { token_type: TokenType::Dump, value: word }),
-                    "disguise" => tokens.push(Token { token_type: TokenType::Disguise, value: word }),
-                    "if" => tokens.push(Token { token_type: TokenType::If, value: word }),
-                    "else" => tokens.push(Token { token_type: TokenType::Else, value: word }),
-                    "loop" => tokens.push(Token { token_type: TokenType::Loop, value: word }),
+                    "let" => tokens.push(Token {
+                        token_type: TokenType::Let,
+                        value: word,
+                    }),
+                    "type" => tokens.push(Token {
+                        token_type: TokenType::Type,
+                        value: word,
+                    }),
+                    "pub" => tokens.push(Token {
+                        token_type: TokenType::Pub,
+                        value: word,
+                    }),
+                    "struct" => tokens.push(Token {
+                        token_type: TokenType::Struct,
+                        value: word,
+                    }),
+                    "stamp" => tokens.push(Token {
+                        token_type: TokenType::Stamp,
+                        value: word,
+                    }),
+                    "dump" => tokens.push(Token {
+                        token_type: TokenType::Dump,
+                        value: word,
+                    }),
+                    "disguise" => tokens.push(Token {
+                        token_type: TokenType::Disguise,
+                        value: word,
+                    }),
+                    "if" => tokens.push(Token {
+                        token_type: TokenType::If,
+                        value: word,
+                    }),
+                    "else" => tokens.push(Token {
+                        token_type: TokenType::Else,
+                        value: word,
+                    }),
+                    "loop" => tokens.push(Token {
+                        token_type: TokenType::Loop,
+                        value: word,
+                    }),
                     _ => {
-                        if word.is_empty() { continue; }
+                        if word.is_empty() {
+                            continue;
+                        }
                         if word.chars().all(|c| c.is_numeric() || c == '.' || c == '-') {
                             tokens.push(Token {
                                 token_type: TokenType::NumberLiteral,
@@ -311,32 +402,48 @@ pub fn compile_tokens(
                 let mut current_idx = idx;
                 let mut is_changeable = false;
 
-                if tokens[current_idx].token_type == TokenType::Let 
-                    || tokens[current_idx].token_type == TokenType::Type 
-                    || tokens[current_idx].token_type == TokenType::Disguise 
+                if tokens[current_idx].token_type == TokenType::Let
+                    || tokens[current_idx].token_type == TokenType::Type
+                    || tokens[current_idx].token_type == TokenType::Disguise
                 {
                     current_idx += 1;
                 }
 
-                if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::Identifier {
+                if current_idx < tokens.len()
+                    && tokens[current_idx].token_type == TokenType::Identifier
+                {
                     let var_name = tokens[current_idx].value.clone();
-                    
-                    if current_idx + 1 < tokens.len() && tokens[current_idx + 1].token_type == TokenType::PlusEquals {
+
+                    let is_constant = var_name.chars().next().map_or(false, |c| c.is_uppercase());
+                    if is_constant {
+                        is_changeable = false;
+                    }
+
+                    if current_idx + 1 < tokens.len()
+                        && tokens[current_idx + 1].token_type == TokenType::PlusEquals
+                    {
                         let mod_idx = current_idx + 2;
                         if mod_idx < tokens.len() {
                             let mod_val = tokens[mod_idx].value.clone();
                             if let Some(sym) = symbol_table.symbols.get(&var_name) {
                                 if !sym.changeable {
-                                    println!("\x1b[1;31mCompile Error:\x1b[0m Cannot modify immutable variable '{}'.", var_name);
+                                    println!(
+                                        "\x1b[1;31mCompile Error:\x1b[0m Cannot modify immutable variable or constant '{}'.",
+                                        var_name
+                                    );
                                     std::process::exit(1);
                                 }
 
-                                let mod_data = if tokens[mod_idx].token_type == TokenType::NumberLiteral {
-                                    if mod_val.contains('.') { AholaData::Float(mod_val.parse().unwrap_or(0.0)) }
-                                    else { AholaData::Integer(mod_val.parse().unwrap_or(0)) }
-                                } else {
-                                    AholaData::String(mod_val)
-                                };
+                                let mod_data =
+                                    if tokens[mod_idx].token_type == TokenType::NumberLiteral {
+                                        if mod_val.contains('.') {
+                                            AholaData::Float(mod_val.parse().unwrap_or(0.0))
+                                        } else {
+                                            AholaData::Integer(mod_val.parse().unwrap_or(0))
+                                        }
+                                    } else {
+                                        AholaData::String(mod_val)
+                                    };
 
                                 bytecode.push(OpCode::PlusEqual(sym.slot, mod_data));
                                 idx = mod_idx + 1;
@@ -346,24 +453,47 @@ pub fn compile_tokens(
                     }
 
                     current_idx += 1;
-                    if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::ChangeableModifier {
+                    if current_idx < tokens.len()
+                        && tokens[current_idx].token_type == TokenType::ChangeableModifier
+                    {
+                        if is_constant {
+                            println!(
+                                "\x1b[1;31mCompile Error:\x1b[0m Constants ('{}') cannot have the '*c' changeable modifier.",
+                                var_name
+                            );
+                            std::process::exit(1);
+                        }
                         is_changeable = true;
                         current_idx += 1;
                     }
 
+                    let mut is_private = false;
                     let mut explicit_type = "deduced".to_string();
-                    if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::Colon {
+                    if current_idx < tokens.len()
+                        && tokens[current_idx].token_type == TokenType::Colon
+                    {
+                        is_private = true;
                         if current_idx + 1 < tokens.len() {
                             explicit_type = tokens[current_idx + 1].value.clone();
                             current_idx += 2;
                         }
                     }
 
-                    if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::Equals {
+                    if current_idx < tokens.len()
+                        && tokens[current_idx].token_type == TokenType::Equals
+                    {
                         let value_idx = current_idx + 1;
                         if value_idx < tokens.len() {
                             let raw_val = tokens[value_idx].value.clone();
-                            
+
+                            if tokens[value_idx].token_type == TokenType::Identifier {
+                                println!(
+                                    "\x1b[1;31mCompile Error:\x1b[0m Invalid assignment format in '{} = {}'. Right side must be an explicit value literal or string.",
+                                    var_name, raw_val
+                                );
+                                std::process::exit(1);
+                            }
+
                             let data = if tokens[value_idx].token_type == TokenType::NumberLiteral {
                                 if raw_val.contains('.') {
                                     AholaData::Float(raw_val.parse().unwrap_or(0.0))
@@ -373,15 +503,19 @@ pub fn compile_tokens(
                             } else if tokens[value_idx].token_type == TokenType::LeftBracket {
                                 let mut items = Vec::new();
                                 let mut scan = value_idx + 1;
-                                while scan < tokens.len() && tokens[scan].token_type != TokenType::RightBracket {
+                                while scan < tokens.len()
+                                    && tokens[scan].token_type != TokenType::RightBracket
+                                {
                                     if tokens[scan].token_type == TokenType::StringLiteral {
                                         items.push(AholaData::String(tokens[scan].value.clone()));
                                     } else if tokens[scan].token_type == TokenType::NumberLiteral {
-                                        items.push(AholaData::Integer(tokens[scan].value.parse().unwrap_or(0)));
+                                        items.push(AholaData::Integer(
+                                            tokens[scan].value.parse().unwrap_or(0),
+                                        ));
                                     }
                                     scan += 1;
                                 }
-                                current_idx = scan; 
+                                current_idx = scan;
                                 AholaData::Card(items)
                             } else {
                                 AholaData::String(raw_val)
@@ -389,7 +523,9 @@ pub fn compile_tokens(
 
                             let final_type = if explicit_type == "deduced" {
                                 match data {
-                                    AholaData::Integer(_) | AholaData::Float(_) => "int/float".to_string(),
+                                    AholaData::Integer(_) | AholaData::Float(_) => {
+                                        "int/float".to_string()
+                                    }
                                     AholaData::Card(_) => "card".to_string(),
                                     _ => "string".to_string(),
                                 }
@@ -400,11 +536,20 @@ pub fn compile_tokens(
                             let slot = if let Some(sym) = symbol_table.symbols.get(&var_name) {
                                 sym.slot
                             } else {
-                                symbol_table.register(&var_name, final_type, is_changeable)
+                                symbol_table.register(
+                                    &var_name,
+                                    final_type,
+                                    is_changeable,
+                                    is_private,
+                                )
                             };
 
                             bytecode.push(OpCode::Store(slot, data));
-                            idx = if tokens[value_idx].token_type == TokenType::LeftBracket { current_idx + 1 } else { value_idx + 1 };
+                            idx = if tokens[value_idx].token_type == TokenType::LeftBracket {
+                                current_idx + 1
+                            } else {
+                                value_idx + 1
+                            };
                             continue;
                         }
                     }
@@ -412,18 +557,22 @@ pub fn compile_tokens(
                 idx += 1;
             }
             TokenType::Pub => {
-                if idx + 3 < tokens.len() 
-                    && tokens[idx + 1].token_type == TokenType::Struct 
-                    && tokens[idx + 2].value == "@main" 
-                    && tokens[idx + 3].token_type == TokenType::LeftBrace 
+                if idx + 3 < tokens.len()
+                    && tokens[idx + 1].token_type == TokenType::Struct
+                    && tokens[idx + 2].value == "@main"
+                    && tokens[idx + 3].token_type == TokenType::LeftBrace
                 {
                     let mut inner_tokens = Vec::new();
                     let mut scan = idx + 4;
                     let mut brace_count = 1;
-                    
+
                     while scan < tokens.len() && brace_count > 0 {
-                        if tokens[scan].token_type == TokenType::LeftBrace { brace_count += 1; }
-                        if tokens[scan].token_type == TokenType::RightBrace { brace_count -= 1; }
+                        if tokens[scan].token_type == TokenType::LeftBrace {
+                            brace_count += 1;
+                        }
+                        if tokens[scan].token_type == TokenType::RightBrace {
+                            brace_count -= 1;
+                        }
                         if brace_count > 0 {
                             inner_tokens.push(tokens[scan].clone());
                         }
@@ -466,7 +615,9 @@ pub struct VirtualMachine {
 
 impl VirtualMachine {
     pub fn new(slots: usize) -> Self {
-        VirtualMachine { memory: vec![None; slots] }
+        VirtualMachine {
+            memory: vec![None; slots],
+        }
     }
 
     pub fn run(&mut self, bytecode: &[OpCode], symbol_table: &SymbolTable) {
@@ -485,7 +636,9 @@ impl VirtualMachine {
                                 (AholaData::Float(old), AholaData::Float(m)) => *old += m,
                                 (AholaData::String(old), AholaData::String(m)) => old.push_str(m),
                                 (AholaData::Card(old), m) => old.push(m.clone()),
-                                _ => panic!("VM Runtime Exception: Type mutation mismatch register slot!"),
+                                _ => panic!(
+                                    "VM Runtime Exception: Type mutation mismatch register slot!"
+                                ),
                             }
                         }
                     }
@@ -532,7 +685,10 @@ fn main() {
     let ahola_code = match fs::read_to_string(file_path) {
         Ok(code) => code,
         Err(_) => {
-            println!("\x1b[1;31mError:\x1b[0m No such file or directory: '{}'", file_path);
+            println!(
+                "\x1b[1;31mError:\x1b[0m No such file or directory: '{}'",
+                file_path
+            );
             std::process::exit(1);
         }
     };
@@ -550,16 +706,22 @@ fn main() {
         }
     };
 
-    println!("{}Compiling{} {}", bold_hex_dark_green, reset_color, file_path);
-    
+    println!(
+        "{}Compiling{} {}",
+        bold_hex_dark_green, reset_color, file_path
+    );
+
     let mut symbol_table = SymbolTable::new();
     let mut bytecode = Vec::new();
 
     compile_tokens(&tokens, &mut symbol_table, &mut bytecode);
 
     let duration = start_time.elapsed().as_millis();
-    println!("{}Compiled{} {} in {}ms", bold_hex_dark_green, reset_color, file_path, duration);
-    
+    println!(
+        "{}Compiled{} {} in {}ms",
+        bold_hex_dark_green, reset_color, file_path, duration
+    );
+
     let mut vm = VirtualMachine::new(symbol_table.next_slot);
     vm.run(&bytecode, &symbol_table);
 }
