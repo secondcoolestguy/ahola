@@ -6,6 +6,7 @@ use std::time::Instant;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum TokenType {
+    Let,
     Stamp,
     Dump,
     Disguise,
@@ -24,6 +25,10 @@ pub enum TokenType {
     If,
     Else,
     Loop,
+    // New tokens for your updated layout:
+    Pub,
+    Struct,
+    ChangeableModifier, // For *c
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +41,7 @@ pub struct Token {
 pub struct AholaValue {
     pub data: Vec<String>,
     pub var_type: String,
+    pub changeable: bool, // Track if it was declared with *c
 }
 
 fn detects_pure_rust(code: &str) -> bool {
@@ -53,53 +59,37 @@ fn evaluate_math_func(func_name: &str, args_str: &str) -> String {
 
     match func_name {
         "min" => {
-            if parts.is_empty() {
-                return "0".to_string();
-            }
+            if parts.is_empty() { return "0".to_string(); }
             let mut current_min = parts[0];
             for &val in &parts {
-                if val < current_min {
-                    current_min = val;
-                }
+                if val < current_min { current_min = val; }
             }
             current_min.to_string()
         }
         "mid" => {
-            if parts.len() != 3 {
-                return "0".to_string();
-            }
+            if parts.len() != 3 { return "0".to_string(); }
             let mut sorted = parts.clone();
             sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
             sorted[1].to_string()
         }
         "max" => {
-            if parts.is_empty() {
-                return "0".to_string();
-            }
+            if parts.is_empty() { return "0".to_string(); }
             let mut current_max = parts[0];
             for &val in &parts {
-                if val > current_max {
-                    current_max = val;
-                }
+                if val > current_max { current_max = val; }
             }
             current_max.to_string()
         }
         "round_up" => {
-            if parts.is_empty() {
-                return "0".to_string();
-            }
+            if parts.is_empty() { return "0".to_string(); }
             parts[0].ceil().to_string()
         }
         "round_down" => {
-            if parts.is_empty() {
-                return "0".to_string();
-            }
+            if parts.is_empty() { return "0".to_string(); }
             parts[0].floor().to_string()
         }
         "abs" => {
-            if parts.is_empty() {
-                return "0".to_string();
-            }
+            if parts.is_empty() { return "0".to_string(); }
             parts[0].abs().to_string()
         }
         _ => "0".to_string(),
@@ -135,53 +125,40 @@ fn lex(code: &str) -> Result<Vec<Token>, String> {
                     token_type: TokenType::StringLiteral,
                     value: string_lit,
                 });
+            } else if ch == '*' {
+                chars.next();
+                if chars.peek() == Some(&'c') {
+                    chars.next();
+                    tokens.push(Token {
+                        token_type: TokenType::ChangeableModifier,
+                        value: "*c".to_string(),
+                    });
+                } else {
+                    return Err("Expected 'c' after '*' for changeable modifier".to_string());
+                }
             } else if ch == ':' {
-                tokens.push(Token {
-                    token_type: TokenType::Colon,
-                    value: ch.to_string(),
-                });
+                tokens.push(Token { token_type: TokenType::Colon, value: ch.to_string() });
                 chars.next();
             } else if ch == '[' {
-                tokens.push(Token {
-                    token_type: TokenType::LeftBracket,
-                    value: ch.to_string(),
-                });
+                tokens.push(Token { token_type: TokenType::LeftBracket, value: ch.to_string() });
                 chars.next();
             } else if ch == ']' {
-                tokens.push(Token {
-                    token_type: TokenType::RightBracket,
-                    value: ch.to_string(),
-                });
+                tokens.push(Token { token_type: TokenType::RightBracket, value: ch.to_string() });
                 chars.next();
             } else if ch == '{' {
-                tokens.push(Token {
-                    token_type: TokenType::LeftBrace,
-                    value: ch.to_string(),
-                });
+                tokens.push(Token { token_type: TokenType::LeftBrace, value: ch.to_string() });
                 chars.next();
             } else if ch == '}' {
-                tokens.push(Token {
-                    token_type: TokenType::RightBrace,
-                    value: ch.to_string(),
-                });
+                tokens.push(Token { token_type: TokenType::RightBrace, value: ch.to_string() });
                 chars.next();
             } else if ch == '>' {
-                tokens.push(Token {
-                    token_type: TokenType::GreaterThan,
-                    value: ch.to_string(),
-                });
+                tokens.push(Token { token_type: TokenType::GreaterThan, value: ch.to_string() });
                 chars.next();
             } else if ch == ',' {
-                tokens.push(Token {
-                    token_type: TokenType::Comma,
-                    value: ch.to_string(),
-                });
+                tokens.push(Token { token_type: TokenType::Comma, value: ch.to_string() });
                 chars.next();
             } else if ch == '=' {
-                tokens.push(Token {
-                    token_type: TokenType::Equals,
-                    value: ch.to_string(),
-                });
+                tokens.push(Token { token_type: TokenType::Equals, value: ch.to_string() });
                 chars.next();
             } else if ch == '+' {
                 chars.next();
@@ -225,34 +202,17 @@ fn lex(code: &str) -> Result<Vec<Token>, String> {
                 }
 
                 match word.as_str() {
-                    "stamp" => tokens.push(Token {
-                        token_type: TokenType::Stamp,
-                        value: word,
-                    }),
-                    "dump" => tokens.push(Token {
-                        token_type: TokenType::Dump,
-                        value: word,
-                    }),
-                    "disguise" => tokens.push(Token {
-                        token_type: TokenType::Disguise,
-                        value: word,
-                    }),
-                    "if" => tokens.push(Token {
-                        token_type: TokenType::If,
-                        value: word,
-                    }),
-                    "else" => tokens.push(Token {
-                        token_type: TokenType::Else,
-                        value: word,
-                    }),
-                    "loop" => tokens.push(Token {
-                        token_type: TokenType::Loop,
-                        value: word,
-                    }),
+                    "let" => tokens.push(Token { token_type: TokenType::Let, value: word }),
+                    "pub" => tokens.push(Token { token_type: TokenType::Pub, value: word }),
+                    "struct" => tokens.push(Token { token_type: TokenType::Struct, value: word }),
+                    "stamp" => tokens.push(Token { token_type: TokenType::Stamp, value: word }),
+                    "dump" => tokens.push(Token { token_type: TokenType::Dump, value: word }),
+                    "disguise" => tokens.push(Token { token_type: TokenType::Disguise, value: word }),
+                    "if" => tokens.push(Token { token_type: TokenType::If, value: word }),
+                    "else" => tokens.push(Token { token_type: TokenType::Else, value: word }),
+                    "loop" => tokens.push(Token { token_type: TokenType::Loop, value: word }),
                     _ => {
-                        if word.is_empty() {
-                            continue;
-                        }
+                        if word.is_empty() { continue; }
                         if word.chars().all(|c| c.is_numeric() || c == '.' || c == '-') {
                             tokens.push(Token {
                                 token_type: TokenType::NumberLiteral,
@@ -303,6 +263,154 @@ fn compile_and_run_rust_fallback(code: &str) {
     }
 }
 
+fn interpret_tokens(tokens: &[Token], variables: &mut HashMap<String, AholaValue>, outputs: &mut Vec<String>) {
+    let mut idx = 0;
+    while idx < tokens.len() {
+        match tokens[idx].token_type {
+            TokenType::Let | TokenType::Disguise => {
+                let mut is_changeable = false;
+                let mut current_idx = idx + 1;
+
+                if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::Identifier {
+                    let var_name = tokens[current_idx].value.clone();
+                    current_idx += 1;
+
+                    if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::ChangeableModifier {
+                        is_changeable = true;
+                        current_idx += 1;
+                    }
+
+                    let mut current_type = "deduced".to_string();
+                    if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::Colon {
+                        current_type = tokens[current_idx + 1].value.clone();
+                        current_idx += 2;
+                    }
+
+                    if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::Equals {
+                        let value_idx = current_idx + 1;
+                        if value_idx < tokens.len() {
+                            if tokens[value_idx].token_type == TokenType::LeftBracket {
+                                let mut card_items = Vec::new();
+                                let mut scan = value_idx + 1;
+                                while scan < tokens.len() && tokens[scan].token_type != TokenType::RightBracket {
+                                    if tokens[scan].token_type == TokenType::StringLiteral || tokens[scan].token_type == TokenType::NumberLiteral {
+                                        card_items.push(tokens[scan].value.clone());
+                                    }
+                                    scan += 1;
+                                }
+                                variables.insert(var_name, AholaValue {
+                                    data: card_items,
+                                    var_type: "card".to_string(),
+                                    changeable: is_changeable,
+                                });
+                                idx = scan + 1;
+                                continue;
+                            } else {
+                                let var_val = tokens[value_idx].value.clone();
+                                if current_type == "deduced" {
+                                    current_type = if tokens[value_idx].token_type == TokenType::NumberLiteral {
+                                        "int/float".to_string()
+                                    } else {
+                                        "string".to_string()
+                                    };
+                                }
+                                variables.insert(var_name, AholaValue {
+                                    data: vec![var_val],
+                                    var_type: current_type,
+                                    changeable: is_changeable,
+                                });
+                                idx = value_idx + 1;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                idx += 1;
+            }
+            TokenType::Identifier => {
+                let var_name = tokens[idx].value.clone();
+                if idx + 1 < tokens.len() && tokens[idx + 1].token_type == TokenType::PlusEquals {
+                    let modifier_idx = idx + 2;
+                    if modifier_idx < tokens.len() {
+                        let modifier = tokens[modifier_idx].value.clone();
+                        if let Some(existing) = variables.get_mut(&var_name) {
+                            if !existing.changeable && tokens[idx - 1].token_type != TokenType::Let {
+                                println!("\x1b[1;31mRuntime Error:\x1b[0m Cannot modify immutable variable '{}'. Did you forget *c?", var_name);
+                                std::process::exit(1);
+                            }
+                            if existing.var_type == "card" {
+                                existing.data.push(modifier);
+                            } else if existing.var_type == "string" {
+                                existing.data[0] = format!("{}{}", existing.data[0], modifier);
+                            } else {
+                                let old_num: f64 = existing.data[0].parse().unwrap_or(0.0);
+                                let mod_num: f64 = modifier.parse().unwrap_or(0.0);
+                                existing.data[0] = (old_num + mod_num).to_string();
+                            }
+                        }
+                        idx = modifier_idx + 1;
+                        continue;
+                    }
+                }
+                idx += 1;
+            }
+            TokenType::Pub => {
+                // Look ahead for struct @main { ... }
+                if idx + 3 < tokens.len() 
+                    && tokens[idx + 1].token_type == TokenType::Struct 
+                    && tokens[idx + 2].value == "@main" 
+                    && tokens[idx + 3].token_type == TokenType::LeftBrace 
+                {
+                    let mut inner_tokens = Vec::new();
+                    let mut scan = idx + 4;
+                    let mut brace_count = 1;
+                    
+                    while scan < tokens.len() && brace_count > 0 {
+                        if tokens[scan].token_type == TokenType::LeftBrace { brace_count += 1; }
+                        if tokens[scan].token_type == TokenType::RightBrace { brace_count -= 1; }
+                        if brace_count > 0 {
+                            inner_tokens.push(tokens[scan].clone());
+                        }
+                        scan += 1;
+                    }
+                    // Run the code block safely inside the entry scope!
+                    interpret_tokens(&inner_tokens, variables, outputs);
+                    idx = scan;
+                } else {
+                    idx += 1;
+                }
+            }
+            TokenType::Stamp => {
+                if idx + 1 < tokens.len() {
+                    let mut message = tokens[idx + 1].value.clone();
+                    for (var_name, var_obj) in variables.iter() {
+                        let dynamic_pattern = format!("\\({})", var_name);
+                        if message.contains(&dynamic_pattern) {
+                            message = message.replace(&dynamic_pattern, &var_obj.data.join(", "));
+                        }
+                    }
+                    outputs.push(message);
+                    idx += 2;
+                } else {
+                    idx += 1;
+                }
+            }
+            TokenType::Dump => {
+                if idx + 1 < tokens.len() {
+                    let target = &tokens[idx + 1].value;
+                    if let Some(var) = variables.get(target) {
+                        outputs.push(format!("{:?}", var.data));
+                    }
+                    idx += 2;
+                } else {
+                    idx += 1;
+                }
+            }
+            _ => idx += 1,
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 4 || args[1] != "yeah" || args[2] != "run" {
@@ -329,187 +437,16 @@ fn main() {
         }
     };
 
-    println!(
-        "{}Compiling{} {}",
-        bold_hex_dark_green, reset_color, file_path
-    );
+    println!("{}Compiling{} {}", bold_hex_dark_green, reset_color, file_path);
+    
     let mut variables: HashMap<String, AholaValue> = HashMap::new();
     let mut outputs = Vec::new();
-    let mut idx = 0;
 
-    while idx < tokens.len() {
-        match tokens[idx].token_type {
-            TokenType::Identifier => {
-                let var_name = tokens[idx].value.clone();
-                let mut current_type = "deduced".to_string();
-                let mut lookahead = idx + 1;
-                if lookahead < tokens.len() && tokens[lookahead].token_type == TokenType::Colon {
-                    current_type = tokens[lookahead + 1].value.clone();
-                    lookahead += 2;
-                }
-                if lookahead < tokens.len() && tokens[lookahead].token_type == TokenType::Equals {
-                    let value_idx = lookahead + 1;
-                    if value_idx < tokens.len() {
-                        if tokens[value_idx].token_type == TokenType::LeftBracket {
-                            let mut card_items = Vec::new();
-                            let mut scan = value_idx + 1;
-                            while scan < tokens.len()
-                                && tokens[scan].token_type != TokenType::RightBracket
-                            {
-                                if tokens[scan].token_type == TokenType::StringLiteral
-                                    || tokens[scan].token_type == TokenType::NumberLiteral
-                                {
-                                    card_items.push(tokens[scan].value.clone());
-                                }
-                                scan += 1;
-                            }
-                            variables.insert(
-                                var_name,
-                                AholaValue {
-                                    data: card_items,
-                                    var_type: "card".to_string(),
-                                },
-                            );
-                            idx = scan + 1;
-                            continue;
-                        } else {
-                            let var_val = tokens[value_idx].value.clone();
-                            if current_type == "deduced" {
-                                current_type =
-                                    if tokens[value_idx].token_type == TokenType::NumberLiteral {
-                                        "int/float".to_string()
-                                    } else {
-                                        "string".to_string()
-                                    };
-                            }
-                            variables.insert(
-                                var_name,
-                                AholaValue {
-                                    data: vec![var_val],
-                                    var_type: current_type,
-                                },
-                            );
-                            idx = value_idx + 1;
-                            continue;
-                        }
-                    }
-                } else if lookahead < tokens.len()
-                    && tokens[lookahead].token_type == TokenType::PlusEquals
-                {
-                    let modifier_idx = lookahead + 1;
-                    if modifier_idx < tokens.len() {
-                        let modifier = tokens[modifier_idx].value.clone();
-                        if let Some(existing) = variables.get_mut(&var_name) {
-                            if existing.var_type == "card" {
-                                existing.data.push(modifier);
-                            } else if existing.var_type == "string" {
-                                existing.data[0] = format!("{}{}", existing.data[0], modifier);
-                            } else {
-                                let old_num: f64 = existing.data[0].parse().unwrap_or(0.0);
-                                let mod_num: f64 = modifier.parse().unwrap_or(0.0);
-                                existing.data[0] = (old_num + mod_num).to_string();
-                            }
-                        }
-                        idx = modifier_idx + 1;
-                        continue;
-                    }
-                }
-                idx += 1;
-            }
-            TokenType::If => {
-                if idx + 4 < tokens.len() && tokens[idx + 2].token_type == TokenType::GreaterThan {
-                    let var_name = &tokens[idx + 1].value;
-                    let compare_val: f64 = tokens[idx + 3].value.parse().unwrap_or(0.0);
-                    let mut condition_met = false;
-                    if let Some(var) = variables.get(var_name) {
-                        let current_val: f64 = var.data[0].parse().unwrap_or(0.0);
-                        if current_val > compare_val {
-                            condition_met = true;
-                        }
-                    }
-                    let mut block_tokens = Vec::new();
-                    let mut scan = idx + 4;
-                    while scan < tokens.len() && tokens[scan].token_type != TokenType::LeftBrace {
-                        scan += 1;
-                    }
-                    scan += 1;
-                    while scan < tokens.len() && tokens[scan].token_type != TokenType::RightBrace {
-                        block_tokens.push(tokens[scan].clone());
-                        scan += 1;
-                    }
-                    if condition_met {
-                        if !block_tokens.is_empty()
-                            && block_tokens[0].token_type == TokenType::Stamp
-                        {
-                            outputs.push(block_tokens[1].value.clone());
-                        }
-                    }
-                    idx = scan + 1;
-                } else {
-                    idx += 1;
-                }
-            }
-            TokenType::Loop => {
-                if idx + 2 < tokens.len() && tokens[idx + 1].token_type == TokenType::NumberLiteral
-                {
-                    let iterations: usize = tokens[idx + 1].value.parse().unwrap_or(0);
-                    let mut scan = idx + 2;
-                    while scan < tokens.len() && tokens[scan].token_type != TokenType::LeftBrace {
-                        scan += 1;
-                    }
-                    scan += 1;
-                    let mut block_tokens = Vec::new();
-                    while scan < tokens.len() && tokens[scan].token_type != TokenType::RightBrace {
-                        block_tokens.push(tokens[scan].clone());
-                        scan += 1;
-                    }
-                    for _ in 0..iterations {
-                        if !block_tokens.is_empty()
-                            && block_tokens[0].token_type == TokenType::Stamp
-                        {
-                            outputs.push(block_tokens[1].value.clone());
-                        }
-                    }
-                    idx = scan + 1;
-                } else {
-                    idx += 1;
-                }
-            }
-            TokenType::Dump => {
-                if idx + 1 < tokens.len() {
-                    let target = &tokens[idx + 1].value;
-                    if let Some(var) = variables.get(target) {
-                        outputs.push(format!("{:?}", var.data));
-                    }
-                    idx += 2;
-                } else {
-                    idx += 1;
-                }
-            }
-            TokenType::Stamp => {
-                if idx + 1 < tokens.len() {
-                    let mut message = tokens[idx + 1].value.clone();
-                    for (var_name, var_obj) in &variables {
-                        let dynamic_pattern = format!("\\({})", var_name);
-                        if message.contains(&dynamic_pattern) {
-                            message = message.replace(&dynamic_pattern, &var_obj.data.join(", "));
-                        }
-                    }
-                    outputs.push(message);
-                    idx += 2;
-                } else {
-                    idx += 1;
-                }
-            }
-            _ => idx += 1,
-        }
-    }
+    interpret_tokens(&tokens, &mut variables, &mut outputs);
 
     let duration = start_time.elapsed().as_millis();
-    println!(
-        "{}Compiled{} {} in {}ms",
-        bold_hex_dark_green, reset_color, file_path, duration
-    );
+    println!("{}Compiled{} {} in {}ms", bold_hex_dark_green, reset_color, file_path, duration);
+    
     for out in outputs {
         println!("{}", out);
     }
