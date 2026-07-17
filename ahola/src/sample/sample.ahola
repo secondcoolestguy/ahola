@@ -1,0 +1,4 @@
+score: int = 90
+
+stamp "your score is: \(score)"
+dump score
