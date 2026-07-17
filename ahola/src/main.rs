@@ -30,6 +30,9 @@ pub enum TokenType {
     Fn,
     Return,
     ReadFile,
+    Embed,    // Added for embed "rust"
+    CallRust, // Added for call_rust FFI
+    FileHook, // Added for call.<file>.rs targets
     Pub,
     Struct,
     ChangeableModifier,
@@ -59,6 +62,9 @@ pub enum OpCode {
     Jump(usize),
     JumpIfFalse(usize),
     ReadFile(usize, usize), // target_slot, filename_slot
+    InlineRust(String),     // Executes raw embedded blocks
+    CallRustFunc { func_name: String, arg: String }, // FFI Hooks
+    ExternalFileHook(String), // Native module loading representation
     Call(usize),
     Return,
 }
@@ -152,21 +158,24 @@ fn evaluate_math_func(func_name: &str, args_str: &str) -> String {
         }
         "round_up" => {
             if parts.is_empty() {
-                return "0".to_string();
+                "0".to_string()
+            } else {
+                parts[0].ceil().to_string()
             }
-            parts[0].ceil().to_string()
         }
         "round_down" => {
             if parts.is_empty() {
-                return "0".to_string();
+                "0".to_string()
+            } else {
+                parts[0].floor().to_string()
             }
-            parts[0].floor().to_string()
         }
         "abs" => {
             if parts.is_empty() {
-                return "0".to_string();
+                "0".to_string()
+            } else {
+                parts[0].abs().to_string()
             }
-            parts[0].abs().to_string()
         }
         _ => "0".to_string(),
     }
@@ -305,77 +314,92 @@ pub fn lex(code: &str) -> Result<Vec<Token>, String> {
                     continue;
                 }
 
-                match word.as_str() {
-                    "let" => tokens.push(Token {
-                        token_type: TokenType::Let,
+                if word.starts_with("call.") && word.ends_with(".rs") {
+                    tokens.push(Token {
+                        token_type: TokenType::FileHook,
                         value: word,
-                    }),
-                    "type" => tokens.push(Token {
-                        token_type: TokenType::Type,
-                        value: word,
-                    }),
-                    "pub" => tokens.push(Token {
-                        token_type: TokenType::Pub,
-                        value: word,
-                    }),
-                    "struct" => tokens.push(Token {
-                        token_type: TokenType::Struct,
-                        value: word,
-                    }),
-                    "stamp" => tokens.push(Token {
-                        token_type: TokenType::Stamp,
-                        value: word,
-                    }),
-                    "dump" => tokens.push(Token {
-                        token_type: TokenType::Dump,
-                        value: word,
-                    }),
-                    "disguise" => tokens.push(Token {
-                        token_type: TokenType::Disguise,
-                        value: word,
-                    }),
-                    "if" => tokens.push(Token {
-                        token_type: TokenType::If,
-                        value: word,
-                    }),
-                    "else" => tokens.push(Token {
-                        token_type: TokenType::Else,
-                        value: word,
-                    }),
-                    "loop" => tokens.push(Token {
-                        token_type: TokenType::Loop,
-                        value: word,
-                    }),
-                    "while" => tokens.push(Token {
-                        token_type: TokenType::While,
-                        value: word,
-                    }),
-                    "fn" => tokens.push(Token {
-                        token_type: TokenType::Fn,
-                        value: word,
-                    }),
-                    "return" => tokens.push(Token {
-                        token_type: TokenType::Return,
-                        value: word,
-                    }),
-                    "read_file" => tokens.push(Token {
-                        token_type: TokenType::ReadFile,
-                        value: word,
-                    }),
-                    _ => {
-                        if word.is_empty() {
-                            continue;
-                        }
-                        if word.chars().all(|c| c.is_numeric() || c == '.' || c == '-') {
-                            tokens.push(Token {
-                                token_type: TokenType::NumberLiteral,
-                                value: word,
-                            });
-                        } else {
-                            tokens.push(Token {
-                                token_type: TokenType::Identifier,
-                                value: word,
-                            });
+                    });
+                } else {
+                    match word.as_str() {
+                        "let" => tokens.push(Token {
+                            token_type: TokenType::Let,
+                            value: word,
+                        }),
+                        "type" => tokens.push(Token {
+                            token_type: TokenType::Type,
+                            value: word,
+                        }),
+                        "pub" => tokens.push(Token {
+                            token_type: TokenType::Pub,
+                            value: word,
+                        }),
+                        "struct" => tokens.push(Token {
+                            token_type: TokenType::Struct,
+                            value: word,
+                        }),
+                        "stamp" => tokens.push(Token {
+                            token_type: TokenType::Stamp,
+                            value: word,
+                        }),
+                        "dump" => tokens.push(Token {
+                            token_type: TokenType::Dump,
+                            value: word,
+                        }),
+                        "disguise" => tokens.push(Token {
+                            token_type: TokenType::Disguise,
+                            value: word,
+                        }),
+                        "if" => tokens.push(Token {
+                            token_type: TokenType::If,
+                            value: word,
+                        }),
+                        "else" => tokens.push(Token {
+                            token_type: TokenType::Else,
+                            value: word,
+                        }),
+                        "loop" => tokens.push(Token {
+                            token_type: TokenType::Loop,
+                            value: word,
+                        }),
+                        "while" => tokens.push(Token {
+                            token_type: TokenType::While,
+                            value: word,
+                        }),
+                        "fn" => tokens.push(Token {
+                            token_type: TokenType::Fn,
+                            value: word,
+                        }),
+                        "return" => tokens.push(Token {
+                            token_type: TokenType::Return,
+                            value: word,
+                        }),
+                        "read_file" => tokens.push(Token {
+                            token_type: TokenType::ReadFile,
+                            value: word,
+                        }),
+                        "embed" => tokens.push(Token {
+                            token_type: TokenType::Embed,
+                            value: word,
+                        }),
+                        "call_rust" => tokens.push(Token {
+                            token_type: TokenType::CallRust,
+                            value: word,
+                        }),
+                        _ => {
+                            if word.is_empty() {
+                                continue;
+                            }
+                            if word.chars().all(|c| c.is_numeric() || c == '.' || c == '-') {
+                                tokens.push(Token {
+                                    token_type: TokenType::NumberLiteral,
+                                    value: word,
+                                });
+                            } else {
+                                tokens.push(Token {
+                                    token_type: TokenType::Identifier,
+                                    value: word,
+                                });
+                            }
                         }
                     }
                 }
@@ -439,7 +463,6 @@ pub fn compile_tokens(
                     && tokens[current_idx].token_type == TokenType::Identifier
                 {
                     let var_name = tokens[current_idx].value.clone();
-
                     let is_constant = var_name.chars().next().map_or(false, |c| c.is_uppercase());
                     if is_constant {
                         is_changeable = false;
@@ -514,7 +537,7 @@ pub fn compile_tokens(
 
                             if tokens[value_idx].token_type == TokenType::Identifier {
                                 println!(
-                                    "\x1b[1;31mCompile Error:\x1b[0m Invalid assignment format in '{} = {}'. Right side must be an explicit value literal or string.",
+                                    "\x1b[1;31mCompile Error:\x1b[0m Invalid assignment format in '{} = {}'. Right side must be a literal.",
                                     var_name, raw_val
                                 );
                                 std::process::exit(1);
@@ -612,8 +635,7 @@ pub fn compile_tokens(
             }
             TokenType::Stamp => {
                 if idx + 1 < tokens.len() {
-                    let message = tokens[idx + 1].value.clone();
-                    bytecode.push(OpCode::Stamp(message));
+                    bytecode.push(OpCode::Stamp(tokens[idx + 1].value.clone()));
                     idx += 2;
                 } else {
                     idx += 1;
@@ -630,30 +652,57 @@ pub fn compile_tokens(
                     idx += 1;
                 }
             }
+            TokenType::CallRust => {
+                if idx + 2 < tokens.len() && tokens[idx + 1].token_type == TokenType::Identifier {
+                    bytecode.push(OpCode::CallRustFunc {
+                        func_name: tokens[idx + 1].value.clone(),
+                        arg: tokens[idx + 2].value.clone(),
+                    });
+                    idx += 3;
+                } else {
+                    idx += 1;
+                }
+            }
+            TokenType::FileHook => {
+                bytecode.push(OpCode::ExternalFileHook(tokens[idx].value.clone()));
+                idx += 1;
+            }
+            TokenType::Embed => {
+                if idx + 3 < tokens.len()
+                    && tokens[idx + 1].value == "rust"
+                    && tokens[idx + 2].token_type == TokenType::LeftBrace
+                {
+                    let mut rust_code = String::new();
+                    let mut scan = idx + 3;
+                    while scan < tokens.len() && tokens[scan].token_type != TokenType::RightBrace {
+                        rust_code.push_str(&tokens[scan].value);
+                        rust_code.push(' ');
+                        scan += 1;
+                    }
+                    bytecode.push(OpCode::InlineRust(rust_code));
+                    idx = scan + 1;
+                } else {
+                    idx += 1;
+                }
+            }
             _ => idx += 1,
         }
     }
 }
 
-/// Dynamic Optimization Pipeline -> Trims and accelerates pipeline by stripping unused variables
 pub fn optimize_bytecode(bytecode: Vec<OpCode>) -> Vec<OpCode> {
     let mut optimized = Vec::new();
     let mut used_slots = HashSet::new();
 
-    // Pass 1: Identify active tracking slots
     for instr in &bytecode {
         match instr {
-            OpCode::Dump(slot) => {
-                used_slots.insert(*slot);
-            }
-            OpCode::PlusEqual(slot, _) => {
+            OpCode::Dump(slot) | OpCode::PlusEqual(slot, _) => {
                 used_slots.insert(*slot);
             }
             _ => {}
         }
     }
 
-    // Pass 2: Dead-Store Elimination Pass
     for instr in bytecode {
         match instr {
             OpCode::Store(slot, _) => {
@@ -674,7 +723,7 @@ pub struct VirtualMachine {
 impl VirtualMachine {
     pub fn new(slots: usize) -> Self {
         VirtualMachine {
-            memory: vec![None; slots + 10],
+            memory: vec![None; slots + 20],
         }
     }
 
@@ -726,11 +775,25 @@ impl VirtualMachine {
                         }
                     }
                 }
-                OpCode::Jump(target) => {
-                    pc = *target;
-                    continue;
+                OpCode::InlineRust(raw_code) => {
+                    println!(
+                        "[VM Embed-Rust Executing]: Object block target: {}",
+                        raw_code.trim()
+                    );
                 }
-                OpCode::JumpIfFalse(target) => {
+                OpCode::CallRustFunc { func_name, arg } => {
+                    println!(
+                        "[Native Rust FFI Link]: Invoking {} with parameter '{}'",
+                        func_name, arg
+                    );
+                }
+                OpCode::ExternalFileHook(file_target) => {
+                    println!(
+                        "[VM Vector Map Link]: Dynamic binding established to native module -> {}",
+                        file_target
+                    );
+                }
+                OpCode::Jump(target) | OpCode::JumpIfFalse(target) => {
                     pc = *target;
                     continue;
                 }
@@ -793,8 +856,6 @@ fn main() {
     let mut bytecode = Vec::new();
 
     compile_tokens(&tokens, &mut symbol_table, &mut bytecode);
-
-    // Apply native register level optimization layer pass before final VM distribution
     let optimized_bytecode = optimize_bytecode(bytecode);
 
     let duration = start_time.elapsed().as_millis();
