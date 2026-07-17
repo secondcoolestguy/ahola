@@ -27,7 +27,7 @@ pub enum TokenType {
     Loop,
     Pub,
     Struct,
-    ChangeableModifier, // For *c
+    ChangeableModifier,
 }
 
 #[derive(Debug, Clone)]
@@ -36,11 +36,49 @@ pub struct Token {
     pub value: String,
 }
 
+// True Type-Safe Data Enum
+#[derive(Debug, Clone, PartialEq)]
+pub enum AholaData {
+    Integer(i64),
+    Float(f64),
+    String(String),
+    Card(Vec<AholaData>),
+}
+
+// Bytecode operations that the VM reads directly
 #[derive(Debug, Clone)]
-pub struct AholaValue {
-    pub data: Vec<String>,
+pub enum OpCode {
+    Store(usize, AholaData),
+    PlusEqual(usize, AholaData),
+    Stamp(String), // Contains compiled text
+    Dump(usize),
+}
+
+// Symbol Entry inside our compile-time tracker
+pub struct Symbol {
+    pub slot: usize,
     pub var_type: String,
     pub changeable: bool,
+}
+
+pub struct SymbolTable {
+    pub symbols: HashMap<String, Symbol>,
+    pub next_slot: usize,
+}
+
+impl SymbolTable {
+    pub fn new() -> Self {
+        SymbolTable {
+            symbols: HashMap::new(),
+            next_slot: 0,
+        }
+    }
+    pub fn register(&mut self, name: &str, var_type: String, changeable: bool) -> usize {
+        let slot = self.next_slot;
+        self.symbols.insert(name.to_string(), Symbol { slot, var_type, changeable });
+        self.next_slot += 1;
+        slot
+    }
 }
 
 fn detects_pure_rust(code: &str) -> bool {
@@ -262,13 +300,23 @@ fn compile_and_run_rust_fallback(code: &str) {
     }
 }
 
-fn interpret_tokens(tokens: &[Token], variables: &mut HashMap<String, AholaValue>, outputs: &mut Vec<String>) {
+// Compiler: Turns code tokens into linear Bytecode instructions
+fn compile_tokens(
+    tokens: &[Token],
+    symbol_table: &mut SymbolTable,
+    bytecode: &mut Vec<OpCode>,
+) {
     let mut idx = 0;
     while idx < tokens.len() {
         match tokens[idx].token_type {
-            TokenType::Let | TokenType::Disguise => {
+            TokenType::Let | TokenType::Disguise | TokenType::Identifier => {
+                let start_idx = idx;
                 let mut is_changeable = false;
-                let mut current_idx = idx + 1;
+                let mut current_idx = idx;
+
+                if tokens[current_idx].token_type == TokenType::Let || tokens[current_idx].token_type == TokenType::Disguise {
+                    current_idx += 1;
+                }
 
                 if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::Identifier {
                     let var_name = tokens[current_idx].value.clone();
@@ -279,98 +327,89 @@ fn interpret_tokens(tokens: &[Token], variables: &mut HashMap<String, AholaValue
                         current_idx += 1;
                     }
 
-                    let mut current_type = "deduced".to_string();
+                    let mut explicit_type = "deduced".to_string();
                     if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::Colon {
-                        current_type = tokens[current_idx + 1].value.clone();
-                        current_idx += 2;
+                        if current_idx + 1 < tokens.len() {
+                            explicit_type = tokens[current_idx + 1].value.clone();
+                            current_idx += 2;
+                        }
                     }
 
                     if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::Equals {
                         let value_idx = current_idx + 1;
                         if value_idx < tokens.len() {
-                            if tokens[value_idx].token_type == TokenType::LeftBracket {
-                                let mut card_items = Vec::new();
+                            let raw_val = tokens[value_idx].value.clone();
+                            
+                            let data = if tokens[value_idx].token_type == TokenType::NumberLiteral {
+                                if raw_val.contains('.') {
+                                    AholaData::Float(raw_val.parse().unwrap_or(0.0))
+                                } else {
+                                    AholaData::Integer(raw_val.parse().unwrap_or(0))
+                                }
+                            } else if tokens[value_idx].token_type == TokenType::LeftBracket {
+                                let mut items = Vec::new();
                                 let mut scan = value_idx + 1;
                                 while scan < tokens.len() && tokens[scan].token_type != TokenType::RightBracket {
-                                    if tokens[scan].token_type == TokenType::StringLiteral || tokens[scan].token_type == TokenType::NumberLiteral {
-                                        card_items.push(tokens[scan].value.clone());
+                                    if tokens[scan].token_type == TokenType::StringLiteral {
+                                        items.push(AholaData::String(tokens[scan].value.clone()));
+                                    } else if tokens[scan].token_type == TokenType::NumberLiteral {
+                                        items.push(AholaData::Integer(tokens[scan].value.parse().unwrap_or(0)));
                                     }
                                     scan += 1;
                                 }
-                                variables.insert(var_name, AholaValue {
-                                    data: card_items,
-                                    var_type: "card".to_string(),
-                                    changeable: is_changeable,
-                                });
-                                idx = scan + 1;
-                                continue;
+                                current_idx = scan; 
+                                AholaData::Card(items)
                             } else {
-                                let var_val = tokens[value_idx].value.clone();
-                                if current_type == "deduced" {
-                                    current_type = if tokens[value_idx].token_type == TokenType::NumberLiteral {
-                                        "int/float".to_string()
-                                    } else {
-                                        "string".to_string()
-                                    };
+                                AholaData::String(raw_val)
+                            };
+
+                            let final_type = if explicit_type == "deduced" {
+                                match data {
+                                    AholaData::Integer(_) | AholaData::Float(_) => "int/float".to_string(),
+                                    AholaData::Card(_) => "card".to_string(),
+                                    _ => "string".to_string(),
                                 }
-                                variables.insert(var_name, AholaValue {
-                                    data: vec![var_val],
-                                    var_type: current_type,
-                                    changeable: is_changeable,
-                                });
-                                idx = value_idx + 1;
-                                continue;
-                            }
+                            } else {
+                                explicit_type
+                            };
+
+                            // Look up slot or allocate slot
+                            let slot = if let Some(sym) = symbol_table.symbols.get(&var_name) {
+                                sym.slot
+                            } else {
+                                symbol_table.register(&var_name, final_type, is_changeable)
+                            };
+
+                            bytecode.push(OpCode::Store(slot, data));
+                            idx = if tokens[value_idx].token_type == TokenType::LeftBracket { current_idx + 1 } else { value_idx + 1 };
+                            continue;
                         }
                     }
                 }
-                idx += 1;
-            }
-            TokenType::Identifier => {
-                let var_name = tokens[idx].value.clone();
-                let mut current_idx = idx + 1;
-                let mut is_changeable = false;
 
-                if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::ChangeableModifier {
-                    is_changeable = true;
-                    current_idx += 1;
-                }
-
-                if current_idx < tokens.len() && tokens[current_idx].token_type == TokenType::Equals {
-                    let value_idx = current_idx + 1;
-                    if value_idx < tokens.len() {
-                        let var_val = tokens[value_idx].value.clone();
-                        variables.insert(var_name.clone(), AholaValue {
-                            data: vec![var_val],
-                            var_type: if tokens[value_idx].token_type == TokenType::NumberLiteral { "int/float".to_string() } else { "string".to_string() },
-                            changeable: is_changeable,
-                        });
-                        idx = value_idx + 1;
-                        continue;
-                    }
-                }
-
+                // Handle mutating logic (+=)
+                let var_name = tokens[start_idx].value.clone();
                 if idx + 1 < tokens.len() && tokens[idx + 1].token_type == TokenType::PlusEquals {
-                    let modifier_idx = idx + 2;
-                    if modifier_idx < tokens.len() {
-                        let modifier = tokens[modifier_idx].value.clone();
-                        if let Some(existing) = variables.get_mut(&var_name) {
-                            if !existing.changeable {
-                                println!("\x1b[1;31mRuntime Error:\x1b[0m Cannot modify immutable variable '{}'. Did you forget *c?", var_name);
+                    let mod_idx = idx + 2;
+                    if mod_idx < tokens.len() {
+                        let mod_val = tokens[mod_idx].value.clone();
+                        if let Some(sym) = symbol_table.symbols.get(&var_name) {
+                            if !sym.changeable {
+                                println!("\x1b[1;31mCompile Error:\x1b[0m Cannot modify immutable variable '{}'.", var_name);
                                 std::process::exit(1);
                             }
-                            if existing.var_type == "card" {
-                                existing.data.push(modifier);
-                            } else if existing.var_type == "string" {
-                                existing.data[0] = format!("{}{}", existing.data[0], modifier);
+
+                            let mod_data = if tokens[mod_idx].token_type == TokenType::NumberLiteral {
+                                if mod_val.contains('.') { AholaData::Float(mod_val.parse().unwrap_or(0.0)) }
+                                else { AholaData::Integer(mod_val.parse().unwrap_or(0)) }
                             } else {
-                                let old_num: f64 = existing.data[0].parse().unwrap_or(0.0);
-                                let mod_num: f64 = modifier.parse().unwrap_or(0.0);
-                                existing.data[0] = (old_num + mod_num).to_string();
-                            }
+                                AholaData::String(mod_val)
+                            };
+
+                            bytecode.push(OpCode::PlusEqual(sym.slot, mod_data));
+                            idx = mod_idx + 1;
+                            continue;
                         }
-                        idx = modifier_idx + 1;
-                        continue;
                     }
                 }
                 idx += 1;
@@ -393,7 +432,7 @@ fn interpret_tokens(tokens: &[Token], variables: &mut HashMap<String, AholaValue
                         }
                         scan += 1;
                     }
-                    interpret_tokens(&inner_tokens, variables, outputs);
+                    compile_tokens(&inner_tokens, symbol_table, bytecode);
                     idx = scan;
                 } else {
                     idx += 1;
@@ -401,14 +440,8 @@ fn interpret_tokens(tokens: &[Token], variables: &mut HashMap<String, AholaValue
             }
             TokenType::Stamp => {
                 if idx + 1 < tokens.len() {
-                    let mut message = tokens[idx + 1].value.clone();
-                    for (var_name, var_obj) in variables.iter() {
-                        let dynamic_pattern = format!("\\({})", var_name);
-                        if message.contains(&dynamic_pattern) {
-                            message = message.replace(&dynamic_pattern, &var_obj.data.join(", "));
-                        }
-                    }
-                    outputs.push(message);
+                    let message = tokens[idx + 1].value.clone();
+                    bytecode.push(OpCode::Stamp(message));
                     idx += 2;
                 } else {
                     idx += 1;
@@ -417,8 +450,8 @@ fn interpret_tokens(tokens: &[Token], variables: &mut HashMap<String, AholaValue
             TokenType::Dump => {
                 if idx + 1 < tokens.len() {
                     let target = &tokens[idx + 1].value;
-                    if let Some(var) = variables.get(target) {
-                        outputs.push(format!("{:?}", var.data));
+                    if let Some(sym) = symbol_table.symbols.get(target) {
+                        bytecode.push(OpCode::Dump(sym.slot));
                     }
                     idx += 2;
                 } else {
@@ -426,6 +459,62 @@ fn interpret_tokens(tokens: &[Token], variables: &mut HashMap<String, AholaValue
                 }
             }
             _ => idx += 1,
+        }
+    }
+}
+
+// High-Speed Virtual Machine Execution Engine
+pub struct VirtualMachine {
+    pub memory: Vec<Option<AholaData>>,
+}
+
+impl VirtualMachine {
+    pub fn new(slots: usize) -> Self {
+        VirtualMachine { memory: vec![None; slots] }
+    }
+
+    pub fn run(&mut self, bytecode: &[OpCode], symbol_table: &SymbolTable) {
+        for instruction in bytecode {
+            match instruction {
+                OpCode::Store(slot, data) => {
+                    self.memory[*slot] = Some(data.clone());
+                }
+                OpCode::PlusEqual(slot, modifier) => {
+                    if let Some(Some(existing)) = self.memory.get_mut(*slot) {
+                        match (existing, modifier) {
+                            (AholaData::Integer(old), AholaData::Integer(m)) => *old += m,
+                            (AholaData::Float(old), AholaData::Float(m)) => *old += m,
+                            (AholaData::String(old), AholaData::String(m)) => old.push_str(m),
+                            (AholaData::Card(old), m) => old.push(m.clone()),
+                            _ => panic!("VM Runtime Exception: Type mutation mismatch register slot!"),
+                        }
+                    }
+                }
+                OpCode::Stamp(message) => {
+                    let mut output_str = message.clone();
+                    // Resolve dependencies inside the VM memory map cleanly!
+                    for (name, symbol) in &symbol_table.symbols {
+                        let pattern = format!("\\({})", name);
+                        if output_str.contains(&pattern) {
+                            if let Some(Some(data)) = self.memory.get(symbol.slot) {
+                                let format_val = match data {
+                                    AholaData::Integer(i) => i.to_string(),
+                                    AholaData::Float(f) => f.to_string(),
+                                    AholaData::String(s) => s.clone(),
+                                    AholaData::Card(items) => format!("{:?}", items),
+                                };
+                                output_str = output_str.replace(&pattern, &format_val);
+                            }
+                        }
+                    }
+                    println!("{}", output_str);
+                }
+                OpCode::Dump(slot) => {
+                    if let Some(Some(data)) = self.memory.get(*slot) {
+                        println!("{:?}", data);
+                    }
+                }
+            }
         }
     }
 }
@@ -464,15 +553,16 @@ fn main() {
 
     println!("{}Compiling{} {}", bold_hex_dark_green, reset_color, file_path);
     
-    let mut variables: HashMap<String, AholaValue> = HashMap::new();
-    let mut outputs = Vec::new();
+    let mut symbol_table = SymbolTable::new();
+    let mut bytecode = Vec::new();
 
-    interpret_tokens(&tokens, &mut variables, &mut outputs);
+    // 1. Run Compilation phase
+    compile_tokens(&tokens, &mut symbol_table, &mut bytecode);
 
     let duration = start_time.elapsed().as_millis();
     println!("{}Compiled{} {} in {}ms", bold_hex_dark_green, reset_color, file_path, duration);
     
-    for out in outputs {
-        println!("{}", out);
-    }
+    // 2. Instantiate VM with the precise amount of memory slots allocated during compile
+    let mut vm = VirtualMachine::new(symbol_table.next_slot);
+    vm.run(&bytecode, &symbol_table);
 }
