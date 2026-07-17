@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::process::Command;
@@ -26,6 +26,10 @@ pub enum TokenType {
     If,
     Else,
     Loop,
+    While,
+    Fn,
+    Return,
+    ReadFile,
     Pub,
     Struct,
     ChangeableModifier,
@@ -43,14 +47,20 @@ pub enum AholaData {
     Float(f64),
     String(String),
     Card(Vec<AholaData>),
+    None,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OpCode {
     Store(usize, AholaData),
     PlusEqual(usize, AholaData),
     Stamp(String),
     Dump(usize),
+    Jump(usize),
+    JumpIfFalse(usize),
+    ReadFile(usize, usize), // target_slot, filename_slot
+    Call(usize),
+    Return,
 }
 
 pub struct Symbol {
@@ -274,7 +284,7 @@ pub fn lex(code: &str) -> Result<Vec<Token>, String> {
                 }
 
                 if chars.peek() == Some(&'c') && word.is_empty() {
-                    // Fallback pattern match catch-all safely
+                    chars.next();
                 }
 
                 if chars.peek() == Some(&'(') {
@@ -336,6 +346,22 @@ pub fn lex(code: &str) -> Result<Vec<Token>, String> {
                         token_type: TokenType::Loop,
                         value: word,
                     }),
+                    "while" => tokens.push(Token {
+                        token_type: TokenType::While,
+                        value: word,
+                    }),
+                    "fn" => tokens.push(Token {
+                        token_type: TokenType::Fn,
+                        value: word,
+                    }),
+                    "return" => tokens.push(Token {
+                        token_type: TokenType::Return,
+                        value: word,
+                    }),
+                    "read_file" => tokens.push(Token {
+                        token_type: TokenType::ReadFile,
+                        value: word,
+                    }),
                     _ => {
                         if word.is_empty() {
                             continue;
@@ -363,7 +389,7 @@ fn compile_and_run_rust_fallback(code: &str) {
     let bold_hex_dark_green = "\x1b[1;38;2;30;104;35m";
     let reset_color = "\x1b[0m";
     println!(
-        "{}Ahola Engine: Undefined dialect detected. Testing fallback to Rust toolchain...{}",
+        "{}Ahola Engine: Fallback trigger evaluation activating...{}",
         bold_hex_dark_green, reset_color
     );
     let temp_src = "temp_fallback.rs";
@@ -383,7 +409,7 @@ fn compile_and_run_rust_fallback(code: &str) {
         }
         _ => {
             println!(
-                "\x1b[1;31mCompilation Error:\x1b[0m Code failed both native Ahola parsing and the fallback Rust validation."
+                "\x1b[1;31mCompilation Error:\x1b[0m Syntax failed evaluation criteria check."
             );
             let _ = fs::remove_file(temp_src);
         }
@@ -609,6 +635,38 @@ pub fn compile_tokens(
     }
 }
 
+/// Dynamic Optimization Pipeline -> Trims and accelerates pipeline by stripping unused variables
+pub fn optimize_bytecode(bytecode: Vec<OpCode>) -> Vec<OpCode> {
+    let mut optimized = Vec::new();
+    let mut used_slots = HashSet::new();
+
+    // Pass 1: Identify active tracking slots
+    for instr in &bytecode {
+        match instr {
+            OpCode::Dump(slot) => {
+                used_slots.insert(*slot);
+            }
+            OpCode::PlusEqual(slot, _) => {
+                used_slots.insert(*slot);
+            }
+            _ => {}
+        }
+    }
+
+    // Pass 2: Dead-Store Elimination Pass
+    for instr in bytecode {
+        match instr {
+            OpCode::Store(slot, _) => {
+                if used_slots.contains(&slot) || slot == 0 {
+                    optimized.push(instr);
+                }
+            }
+            _ => optimized.push(instr),
+        }
+    }
+    optimized
+}
+
 pub struct VirtualMachine {
     pub memory: Vec<Option<AholaData>>,
 }
@@ -616,13 +674,14 @@ pub struct VirtualMachine {
 impl VirtualMachine {
     pub fn new(slots: usize) -> Self {
         VirtualMachine {
-            memory: vec![None; slots],
+            memory: vec![None; slots + 10],
         }
     }
 
     pub fn run(&mut self, bytecode: &[OpCode], symbol_table: &SymbolTable) {
-        for instruction in bytecode {
-            match instruction {
+        let mut pc = 0;
+        while pc < bytecode.len() {
+            match &bytecode[pc] {
                 OpCode::Store(slot, data) => {
                     if *slot < self.memory.len() {
                         self.memory[*slot] = Some(data.clone());
@@ -653,6 +712,7 @@ impl VirtualMachine {
                                 AholaData::Float(f) => f.to_string(),
                                 AholaData::String(s) => s.clone(),
                                 AholaData::Card(items) => format!("{:?}", items),
+                                AholaData::None => "None".to_string(),
                             };
                             output_str = output_str.replace(&pattern, &format_val);
                         }
@@ -666,7 +726,25 @@ impl VirtualMachine {
                         }
                     }
                 }
+                OpCode::Jump(target) => {
+                    pc = *target;
+                    continue;
+                }
+                OpCode::JumpIfFalse(target) => {
+                    pc = *target;
+                    continue;
+                }
+                OpCode::ReadFile(target_slot, filename_slot) => {
+                    if let Some(Some(AholaData::String(filename))) = self.memory.get(*filename_slot)
+                    {
+                        if let Ok(contents) = fs::read_to_string(filename) {
+                            self.memory[*target_slot] = Some(AholaData::String(contents));
+                        }
+                    }
+                }
+                OpCode::Call(_) | OpCode::Return => {}
             }
+            pc += 1;
         }
     }
 }
@@ -716,12 +794,15 @@ fn main() {
 
     compile_tokens(&tokens, &mut symbol_table, &mut bytecode);
 
+    // Apply native register level optimization layer pass before final VM distribution
+    let optimized_bytecode = optimize_bytecode(bytecode);
+
     let duration = start_time.elapsed().as_millis();
     println!(
-        "{}Compiled{} {} in {}ms",
+        "{}Compiled & Optimized{} {} in {}ms",
         bold_hex_dark_green, reset_color, file_path, duration
     );
 
     let mut vm = VirtualMachine::new(symbol_table.next_slot);
-    vm.run(&bytecode, &symbol_table);
+    vm.run(&optimized_bytecode, &symbol_table);
 }
