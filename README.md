@@ -87,13 +87,13 @@ put a `:` before the var to declare it private, and make the first letter upperc
 
   ```zsh
   ➜  sample git:(main) ✗ ahola yeah run test.ahola
-  Compiling test.ahola
-  Compiled test.ahola in 0ms
-  1
+    Compiling test.ahola
+    Compiled test.ahola in 0ms
+    1
   ➜  sample git:(main) ✗
   ```
 
-  same thing for min and abs, (i wish you learned swift already)
+  same thing for min, abs, round_down, and round_up, (i wish you learned swift already)
 </details>
 
 
