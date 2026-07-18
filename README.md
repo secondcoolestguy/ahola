@@ -15,6 +15,10 @@ brew install ahola
 
 Ahhhhhhh, that should do all the bothering work for you
 
+## how to run?
+
+ahola yeah run <file>
+
 ## syntax
 
 Eghkm, Welcome to Ahola
@@ -58,5 +62,20 @@ put a `:` before the var to declare it private, and make the first letter upperc
 
 <details>
 <summary>"Psst! I need more!"</summary>
+  what's min?
+  learn swift dude
+  min selects the least number out of teh ones you give it, like here
+
+  ```ahola
+  min(1, 9, 3)
+  ```
   
+  Output:
+
+  ```
+  ➜  sample git:(main) ✗ ahola yeah run test.ahola
+  <span style="color:darkgreen;font-weight:bold">Compiling</span> test.ahola
+  <span style="color:darkgreen;font-weight:bold">Compiled</span> test.ahola in 0ms
+  1
+  ```
 </details>
