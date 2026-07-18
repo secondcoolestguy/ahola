@@ -21,6 +21,8 @@ ahola yeah run <file>
 
 ## syntax
 
+## print
+
 Eghkm, Welcome to Ahola
 
 wait, how do you ~~print~~ stamp "Hello, World!"?
@@ -29,7 +31,17 @@ wait, how do you ~~print~~ stamp "Hello, World!"?
 stamp "Hello, World!"
 ```
 
+multi-line printing:
+
+stamp """
+this is one line
+this is another
+this is a ~~brother~~ throther
+"""
+
 i bet ahola is so easy that you'll not make a mistake (if you try good enough that is) oh and im not gambling, btw its an idiom
+
+## variables
 
 the most asked question?:
 stamp "How do i make a variable?"
@@ -80,17 +92,10 @@ put a `:` before the var to declare it private, and make the first letter upperc
   1
   ➜  sample git:(main) ✗
   ```
+
+  same thing for min and abs, (i wish you learned swift already)
 </details>
 
-multiline printing:
-
-guess it, did you learn swift already?
-
-stamp """
-this is one line
-this is another
-this is a ~~brother~~ throther
-"""
 
 Whats type?
 
@@ -105,5 +110,16 @@ now lets use it!
 ```ahola
 // your type here
 
+:hello = hi
+stamp "\(hello)"
+```
 
+Output:
+
+```zsh
+➜  sample git:(main) ✗ ahola, yeah run test.ahola
+  Compiling test.ahola
+  Compiled test.ahola in 0ms
+  AGgyHGFHJDCHBDh
+  ➜  sample git:(main) ✗
 ```
