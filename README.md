@@ -87,7 +87,7 @@ put a `:` before the var to declare it private, and make the first letter upperc
 
   ```zsh
   ➜  sample git:(main) ✗ ahola yeah run test.ahola
-  **Compiling** test.ahola
+  Compiling test.ahola
   Compiled test.ahola in 0ms
   1
   ➜  sample git:(main) ✗
@@ -123,3 +123,5 @@ Output:
   AGgyHGFHJDCHBDh
   ➜  sample git:(main) ✗
 ```
+
+disguise
