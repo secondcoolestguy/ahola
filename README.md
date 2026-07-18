@@ -72,10 +72,11 @@ put a `:` before the var to declare it private, and make the first letter upperc
   
   Output:
 
-  ```
+  ```zsh
   ➜  sample git:(main) ✗ ahola yeah run test.ahola
-  <span style="color:darkgreen;font-weight:bold">Compiling</span> test.ahola
-  <span style="color:darkgreen;font-weight:bold">Compiled</span> test.ahola in 0ms
+  Compiling test.ahola
+  Compiled test.ahola in 0ms
   1
+  ➜  sample git:(main) ✗
   ```
 </details>
