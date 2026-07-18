@@ -62,6 +62,7 @@ put a `:` before the var to declare it private, and make the first letter upperc
 
 <details>
 <summary>"Psst! I need more!"</summary>
+  
   what's min?
   learn swift dude
   min selects the least number out of teh ones you give it, like here
@@ -80,3 +81,29 @@ put a `:` before the var to declare it private, and make the first letter upperc
   ➜  sample git:(main) ✗
   ```
 </details>
+
+multiline printing:
+
+guess it, did you learn swift already?
+
+stamp """
+this is one line
+this is another
+this is a ~~brother~~ throther
+"""
+
+Whats type?
+
+type is a way to make your computer "type" for you, like in this example
+
+```ahola
+type "AGgyHGFHJDCHBDh" = hi
+```
+
+now lets use it!
+
+```ahola
+// your type here
+
+
+```
