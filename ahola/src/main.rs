@@ -1,3 +1,5 @@
+use num_bigint::{BigInt, BigUint, ToBigInt};
+use num_traits::{One, Zero};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
@@ -30,12 +32,14 @@ pub enum TokenType {
     Fn,
     Return,
     ReadFile,
-    Embed,    // Added for embed "rust"
-    CallRust, // Added for call_rust FFI
-    FileHook, // Added for call.<file>.rs targets
+    Embed,
+    CallRust,
+    FileHook,
     Pub,
     Struct,
     ChangeableModifier,
+    Dot,
+    Minus,
 }
 
 #[derive(Debug, Clone)]
@@ -46,9 +50,12 @@ pub struct Token {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AholaData {
-    Integer(i64),
+    I4M(BigInt),   // Signed 4 Million bit integer space
+    U4M(BigUint),  // Unsigned 4 Million bit integer space
+    Int5M(BigInt), // Signed 5 Million bit massive arbitrary limit
     Float(f64),
     String(String),
+    DbRef(String), // Reference pointing to a `.db` layer
     Card(Vec<AholaData>),
     None,
 }
@@ -61,12 +68,23 @@ pub enum OpCode {
     Dump(usize),
     Jump(usize),
     JumpIfFalse(usize),
-    ReadFile(usize, usize), // target_slot, filename_slot
-    InlineRust(String),     // Executes raw embedded blocks
-    CallRustFunc { func_name: String, arg: String }, // FFI Hooks
-    ExternalFileHook(String), // Native module loading representation
+    ReadFile(usize, usize),
+    InlineRust(String),
+    CallRustFunc {
+        func_name: String,
+        arg: String,
+    },
+    ExternalFileHook(String),
     Call(usize),
     Return,
+    // Native Database Operation with 4M-5M Bit Width range compatibility
+    DbRangeRequest {
+        target_slot: Option<usize>, // None if running standalone
+        db_var_slot: usize,
+        start: BigUint,
+        end: BigUint,
+    },
+    Ban(usize, String),
 }
 
 pub struct Symbol {
@@ -210,6 +228,18 @@ pub fn lex(code: &str) -> Result<Vec<Token>, String> {
                     token_type: TokenType::StringLiteral,
                     value: string_lit,
                 });
+            } else if ch == '.' {
+                tokens.push(Token {
+                    token_type: TokenType::Dot,
+                    value: ".".to_string(),
+                });
+                chars.next();
+            } else if ch == '-' {
+                tokens.push(Token {
+                    token_type: TokenType::Minus,
+                    value: "-".to_string(),
+                });
+                chars.next();
             } else if ch == '*' {
                 chars.next();
                 if chars.peek() == Some(&'c') {
@@ -284,8 +314,10 @@ pub fn lex(code: &str) -> Result<Vec<Token>, String> {
                 let mut word = String::new();
                 while let Some(&word_ch) = chars.peek() {
                     if word_ch.is_whitespace()
-                        || vec!['"', ':', '[', ']', '{', '}', ',', '=', '+', '>', '(', ')']
-                            .contains(&word_ch)
+                        || vec![
+                            '"', ':', '[', ']', '{', '}', ',', '=', '+', '>', '(', ')', '.', '-',
+                        ]
+                        .contains(&word_ch)
                     {
                         break;
                     }
@@ -389,7 +421,7 @@ pub fn lex(code: &str) -> Result<Vec<Token>, String> {
                             if word.is_empty() {
                                 continue;
                             }
-                            if word.chars().all(|c| c.is_numeric() || c == '.' || c == '-') {
+                            if word.chars().all(|c| c.is_numeric()) {
                                 tokens.push(Token {
                                     token_type: TokenType::NumberLiteral,
                                     value: word,
@@ -447,6 +479,141 @@ pub fn compile_tokens(
 ) {
     let mut idx = 0;
     while idx < tokens.len() {
+        // Lookahead parsing logic to capture clean variable assignments or pure requests
+        if tokens[idx].token_type == TokenType::Identifier
+            && idx + 1 < tokens.len()
+            && tokens[idx + 1].token_type == TokenType::Equals
+        {
+            let target_var = tokens[idx].value.clone();
+            let mut scan = idx + 2;
+
+            if scan < tokens.len() && tokens[scan].token_type == TokenType::Dot {
+                // Example: database instantiation logic -> var = .db
+                if scan + 1 < tokens.len() && tokens[scan + 1].value == "db" {
+                    let slot = symbol_table.register(&target_var, "db".to_string(), true, false);
+                    bytecode.push(OpCode::Store(slot, AholaData::DbRef(target_var.clone())));
+                    idx = scan + 2;
+                    continue;
+                }
+            }
+
+            // Example check: capture variable assignment requests -> user = users.request(1-100)
+            if scan + 2 < tokens.len()
+                && tokens[scan].token_type == TokenType::Identifier
+                && tokens[scan + 1].token_type == TokenType::Dot
+                && tokens[scan + 2].value == "request"
+            {
+                let db_source = tokens[scan].value.clone();
+                if let Some(db_sym) = symbol_table.symbols.get(&db_source) {
+                    let db_slot = db_sym.slot;
+                    scan += 3; // Move into the request boundaries
+                    if scan < tokens.len() && tokens[scan].token_type == TokenType::LeftBracket {
+                        scan += 1;
+                        let mut start_str = String::new();
+                        while scan < tokens.len()
+                            && tokens[scan].token_type == TokenType::NumberLiteral
+                        {
+                            start_str.push_str(&tokens[scan].value);
+                            scan += 1;
+                        }
+                        if scan < tokens.len() && tokens[scan].token_type == TokenType::Minus {
+                            scan += 1;
+                            let mut end_str = String::new();
+                            while scan < tokens.len()
+                                && tokens[scan].token_type == TokenType::NumberLiteral
+                            {
+                                end_str.push_str(&tokens[scan].value);
+                                scan += 1;
+                            }
+                            if scan < tokens.len()
+                                && tokens[scan].token_type == TokenType::RightBracket
+                            {
+                                let start_big =
+                                    start_str.parse::<BigUint>().unwrap_or(BigUint::zero());
+                                let end_big = end_str.parse::<BigUint>().unwrap_or(BigUint::zero());
+
+                                let target_slot = symbol_table.register(
+                                    &target_var,
+                                    "card".to_string(),
+                                    true,
+                                    false,
+                                );
+                                bytecode.push(OpCode::DbRangeRequest {
+                                    target_slot: Some(target_slot),
+                                    db_var_slot: db_slot,
+                                    start: start_big,
+                                    end: end_big,
+                                });
+                                idx = scan + 1;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Handle pure standalone calls (e.g. users.request(1-100))
+        if tokens[idx].token_type == TokenType::Identifier
+            && idx + 2 < tokens.len()
+            && tokens[idx + 1].token_type == TokenType::Dot
+            && tokens[idx + 2].value == "request"
+        {
+            let db_source = tokens[idx].value.clone();
+            if let Some(db_sym) = symbol_table.symbols.get(&db_source) {
+                let db_slot = db_sym.slot;
+                let mut scan = idx + 3;
+                if scan < tokens.len() && tokens[scan].token_type == TokenType::LeftBracket {
+                    scan += 1;
+                    let mut start_str = String::new();
+                    while scan < tokens.len() && tokens[scan].token_type == TokenType::NumberLiteral
+                    {
+                        start_str.push_str(&tokens[scan].value);
+                        scan += 1;
+                    }
+                    if scan < tokens.len() && tokens[scan].token_type == TokenType::Minus {
+                        scan += 1;
+                        let mut end_str = String::new();
+                        while scan < tokens.len()
+                            && tokens[scan].token_type == TokenType::NumberLiteral
+                        {
+                            end_str.push_str(&tokens[scan].value);
+                            scan += 1;
+                        }
+                        if scan < tokens.len() && tokens[scan].token_type == TokenType::RightBracket
+                        {
+                            let start_big = start_str.parse::<BigUint>().unwrap_or(BigUint::zero());
+                            let end_big = end_str.parse::<BigUint>().unwrap_or(BigUint::zero());
+
+                            bytecode.push(OpCode::DbRangeRequest {
+                                target_slot: None,
+                                db_var_slot: db_slot,
+                                start: start_big,
+                                end: end_big,
+                            });
+                            idx = scan + 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Handle direct memory destructive .ban commands
+        if tokens[idx].token_type == TokenType::Dot
+            && idx + 1 < tokens.len()
+            && tokens[idx + 1].value == "ban"
+            && idx + 2 < tokens.len()
+        {
+            let target_banned = tokens[idx + 2].value.clone();
+            if let Some(sym) = symbol_table.symbols.get(&target_banned) {
+                bytecode.push(OpCode::Ban(sym.slot, target_banned.clone()));
+            }
+            idx += 3;
+            continue;
+        }
+
+        // General compiler execution match branch
         match tokens[idx].token_type {
             TokenType::Let | TokenType::Type | TokenType::Disguise | TokenType::Identifier => {
                 let mut current_idx = idx;
@@ -483,16 +650,25 @@ pub fn compile_tokens(
                                     std::process::exit(1);
                                 }
 
-                                let mod_data =
-                                    if tokens[mod_idx].token_type == TokenType::NumberLiteral {
-                                        if mod_val.contains('.') {
-                                            AholaData::Float(mod_val.parse().unwrap_or(0.0))
-                                        } else {
-                                            AholaData::Integer(mod_val.parse().unwrap_or(0))
-                                        }
+                                let mod_data = if tokens[mod_idx].token_type
+                                    == TokenType::NumberLiteral
+                                {
+                                    if sym.var_type == "i4M" {
+                                        AholaData::I4M(
+                                            mod_val.parse::<BigInt>().unwrap_or(BigInt::zero()),
+                                        )
+                                    } else if sym.var_type == "u4M" {
+                                        AholaData::U4M(
+                                            mod_val.parse::<BigUint>().unwrap_or(BigUint::zero()),
+                                        )
                                     } else {
-                                        AholaData::String(mod_val)
-                                    };
+                                        AholaData::Int5M(
+                                            mod_val.parse::<BigInt>().unwrap_or(BigInt::zero()),
+                                        )
+                                    }
+                                } else {
+                                    AholaData::String(mod_val)
+                                };
 
                                 bytecode.push(OpCode::PlusEqual(sym.slot, mod_data));
                                 idx = mod_idx + 1;
@@ -544,10 +720,19 @@ pub fn compile_tokens(
                             }
 
                             let data = if tokens[value_idx].token_type == TokenType::NumberLiteral {
-                                if raw_val.contains('.') {
-                                    AholaData::Float(raw_val.parse().unwrap_or(0.0))
+                                if explicit_type == "u4M" {
+                                    AholaData::U4M(
+                                        raw_val.parse::<BigUint>().unwrap_or(BigUint::zero()),
+                                    )
+                                } else if explicit_type == "int5M" {
+                                    AholaData::Int5M(
+                                        raw_val.parse::<BigInt>().unwrap_or(BigInt::zero()),
+                                    )
                                 } else {
-                                    AholaData::Integer(raw_val.parse().unwrap_or(0))
+                                    // Default to standard signed 4M width
+                                    AholaData::I4M(
+                                        raw_val.parse::<BigInt>().unwrap_or(BigInt::zero()),
+                                    )
                                 }
                             } else if tokens[value_idx].token_type == TokenType::LeftBracket {
                                 let mut items = Vec::new();
@@ -558,8 +743,11 @@ pub fn compile_tokens(
                                     if tokens[scan].token_type == TokenType::StringLiteral {
                                         items.push(AholaData::String(tokens[scan].value.clone()));
                                     } else if tokens[scan].token_type == TokenType::NumberLiteral {
-                                        items.push(AholaData::Integer(
-                                            tokens[scan].value.parse().unwrap_or(0),
+                                        items.push(AholaData::I4M(
+                                            tokens[scan]
+                                                .value
+                                                .parse::<BigInt>()
+                                                .unwrap_or(BigInt::zero()),
                                         ));
                                     }
                                     scan += 1;
@@ -572,9 +760,9 @@ pub fn compile_tokens(
 
                             let final_type = if explicit_type == "deduced" {
                                 match data {
-                                    AholaData::Integer(_) | AholaData::Float(_) => {
-                                        "int/float".to_string()
-                                    }
+                                    AholaData::I4M(_) => "i4M".to_string(),
+                                    AholaData::U4M(_) => "u4M".to_string(),
+                                    AholaData::Int5M(_) => "int5M".to_string(),
                                     AholaData::Card(_) => "card".to_string(),
                                     _ => "string".to_string(),
                                 }
@@ -723,7 +911,7 @@ pub struct VirtualMachine {
 impl VirtualMachine {
     pub fn new(slots: usize) -> Self {
         VirtualMachine {
-            memory: vec![None; slots + 20],
+            memory: vec![None; slots + 50],
         }
     }
 
@@ -740,8 +928,9 @@ impl VirtualMachine {
                     if *slot < self.memory.len() {
                         if let Some(Some(existing)) = self.memory.get_mut(*slot) {
                             match (existing, modifier) {
-                                (AholaData::Integer(old), AholaData::Integer(m)) => *old += m,
-                                (AholaData::Float(old), AholaData::Float(m)) => *old += m,
+                                (AholaData::I4M(old), AholaData::I4M(m)) => *old += m,
+                                (AholaData::U4M(old), AholaData::U4M(m)) => *old += m,
+                                (AholaData::Int5M(old), AholaData::Int5M(m)) => *old += m,
                                 (AholaData::String(old), AholaData::String(m)) => old.push_str(m),
                                 (AholaData::Card(old), m) => old.push(m.clone()),
                                 _ => panic!(
@@ -757,10 +946,13 @@ impl VirtualMachine {
                         let pattern = format!("\\({})", name);
                         if let Some(Some(data)) = self.memory.get(symbol.slot) {
                             let format_val = match data {
-                                AholaData::Integer(i) => i.to_string(),
+                                AholaData::I4M(i) => i.to_string(),
+                                AholaData::U4M(u) => u.to_string(),
+                                AholaData::Int5M(u) => u.to_string(),
                                 AholaData::Float(f) => f.to_string(),
                                 AholaData::String(s) => s.clone(),
                                 AholaData::Card(items) => format!("{:?}", items),
+                                AholaData::DbRef(db) => format!(".db reference ({})", db),
                                 AholaData::None => "None".to_string(),
                             };
                             output_str = output_str.replace(&pattern, &format_val);
@@ -804,6 +996,44 @@ impl VirtualMachine {
                             self.memory[*target_slot] = Some(AholaData::String(contents));
                         }
                     }
+                }
+                OpCode::DbRangeRequest {
+                    target_slot,
+                    db_var_slot,
+                    start,
+                    end,
+                } => {
+                    if let Some(Some(AholaData::DbRef(db_name))) = self.memory.get(*db_var_slot) {
+                        let db = sled::open(format!("{}.db", db_name)).unwrap();
+                        let mut loaded_cards = Vec::new();
+
+                        let mut loop_idx = start.clone();
+                        while loop_idx <= *end {
+                            let key_bytes = loop_idx.to_bytes_be();
+                            if let Some(ivec) = db.get(&key_bytes).unwrap() {
+                                let val_string =
+                                    String::from_utf8(ivec.to_vec()).unwrap_or_default();
+                                loaded_cards.push(AholaData::String(val_string));
+                            }
+                            loop_idx += BigUint::one();
+                        }
+
+                        match target_slot {
+                            Some(slot) => {
+                                // Save inside targeted memory space allocation slot
+                                self.memory[*slot] = Some(AholaData::Card(loaded_cards));
+                            }
+                            None => {
+                                // Standalone call execution output dump stream
+                                println!("[Pure Request Stream Output]: {:?}", loaded_cards);
+                            }
+                        }
+                    }
+                }
+                OpCode::Ban(slot, name) => {
+                    self.memory[*slot] = None;
+                    let _ = fs::remove_dir_all(format!("{}.db", name));
+                    println!("Asset '{}' has been permanently banned and purged.", name);
                 }
                 OpCode::Call(_) | OpCode::Return => {}
             }
